@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lcw://schemas/intent-output/v1",
+  "title": "LCW strict LLM intent output (docs/08, docs/13)",
+  "description": "The optional LLM may ONLY return this object. Unknown fields, actions or enums are rejected. result_ref is a server-issued opaque ID; the LLM can never author a file_id or path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intent", "slots", "needs_clarification"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "intent": {
+      "enum": [
+        "search_current",
+        "lookup_prior_result",
+        "open_result",
+        "refine_search",
+        "list_sources",
+        "model_control",
+        "cancel_action",
+        "clarify",
+        "unknown"
+      ]
+    },
+    "slots": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": { "type": "string", "maxLength": 120 },
+        "date_range": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "relative": { "enum": ["today", "yesterday", "this_week", "last_week", "recent", "unspecified_past"] },
+            "from": { "type": "string", "format": "date" },
+            "to": { "type": "string", "format": "date" }
+          }
+        },
+        "file_type": { "enum": ["md", "txt", "pdf", "image", "code", "any"] },
+        "filename_hint": { "type": "string", "maxLength": 200 },
+        "topic_terms": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 12 },
+        "negative_terms": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 12 },
+        "result_ref": { "type": "string", "pattern": "^r_[A-Za-z0-9]{8,40}$" },
+        "pronoun_ref": { "enum": ["last_shown", "last_opened", "previous_result_set"] },
+        "language": { "enum": ["tr", "en", "mixed"] },
+        "requested_action": { "enum": ["show", "open", "preview", "reveal_in_folder", "none"] },
+        "model_action": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category", "action"],
+          "properties": {
+            "category": { "enum": ["embedding", "llm", "stt", "tts"] },
+            "action": { "enum": ["load", "unload", "status"] }
+          }
+        }
+      }
+    },
+    "needs_clarification": { "type": "boolean" },
+    "clarification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "question"],
+      "properties": {
+        "slot": { "enum": ["project", "date_range", "file_type", "topic_terms", "result_ref"] },
+        "question": { "type": "string", "maxLength": 200 },
+        "options": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 4 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "needs_clarification": { "const": true } } },
+      "then": { "required": ["clarification"] }
+    }
+  ]
+}

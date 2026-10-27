@@ -1,0 +1,2 @@
+{"query":"auction timer bug'ını bul","positive":"Auction timer son 10 saniyede negatif değere düşüyor.","hard_negative":"Chess clock increment ayarı her hamlede 2 saniye ekliyor.","language":"mixed","modality":"text","project_group":"synthetic_game_a","source_consent_id":"synthetic","split":"train"}
+{"query":"butonun tıklanmadığı ekran görüntüsü","positive":"<local-image-path-with-consent>","hard_negative":"<similar-screen-different-project>","language":"tr","modality":"text_to_image","project_group":"synthetic_game_b","source_consent_id":"synthetic","split":"dev"}

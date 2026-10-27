@@ -1,0 +1,17 @@
+{
+  "_comment": "Example app_settings (docs/05, 06, 07, 09, 11). Defaults are PROPOSED hypotheses (ADR-017).",
+  "locale": "tr",
+  "fallback_locale": "en",
+  "hotkey": { "windows": "Alt+Space", "macos": "Cmd+Shift+Space", "on_conflict": "warn_and_rebind" },
+  "window": {
+    "close_behavior": "hide_to_tray",
+    "remember_position": true,
+    "widget_size": { "width": 560, "height": 420 }
+  },
+  "autostart": false,
+  "network": { "local_only": true, "allow_user_initiated_downloads": true },
+  "history": { "enabled": true, "retention_days": 90, "store_raw_audio": false },
+  "indexing": { "default_mode": "manual", "idle_sync": false, "preview_entry_cap": 10000 },
+  "default_ttl_seconds": { "llm": 300, "embedding": 300, "stt": 60, "tts": 120 },
+  "diagnostics": { "local_only": true, "redact_paths": true }
+}

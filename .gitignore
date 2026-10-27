@@ -1,0 +1,40 @@
+# Model weights and runtimes (never commit — docs/23)
+models/
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+*.tflite
+*.litertlm
+runtimes/**/bin/
+
+# Local data, databases, private corpora
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+ai_lab/private/
+ai_lab/checkpoints/
+ai_lab/runs/
+*.wav
+*.mp3
+
+# Build output
+target/
+node_modules/
+dist/
+build/
+apps/desktop/src-tauri/target/
+.venv/
+__pycache__/
+
+# Local env / editor
+.env
+.env.*
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db

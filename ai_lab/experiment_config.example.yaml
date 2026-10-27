@@ -1,0 +1,31 @@
+# Example knobs only (docs/16). Not validated values. Post-MVP (P9).
+base_model: google/embeddinggemma-2
+model_revision: "<pinned>"
+modalities: [text]          # text-only pilot first; vision/audio encoders disabled
+precision: bf16             # never fp16 for EG2 (model card)
+embedding_dim: 768
+normalize: true
+task_prompts:
+  query: "<from official model card>"
+  document: "<from official model card>"
+loss: MultipleNegativesRankingLoss
+dataset:
+  path: "<outside-git>/triplets.jsonl"
+  fingerprint: "<sha256>"
+  split_by: [project_group, time]
+training:
+  mode: full_or_partial     # official pipeline baseline first
+  lora:                     # only if PEFT compatibility proven (V06)
+    enabled: false
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    target_modules: []      # inspect real module names first
+  batch_size: 16
+  grad_accumulation: 1
+  gradient_checkpointing: true
+  epochs: 1
+  seed: 42
+eval:
+  corpus_version: "<frozen>"
+  metrics: [recall@1, recall@3, mrr@10, ndcg@10]
