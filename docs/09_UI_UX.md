@@ -1,5 +1,8 @@
 # 09 — UI/UX Design Direction (Editable, Not a Locked Visual System)
 
+> **Görsel tasarım ve uygulama planı:** `docs/24_UI_UX_PLAN.md`. Ayrı Settings penceresi yerine genişletilmiş uygulamanın Models / Folders / Settings sayfaları kullanılır; aşağıdaki işlev sözleşmeleri geçerliliğini korur.
+
+
 ## Visual principles
 A **minimal desktop utility**, not a chatbot web app, dashboard or 3D visualization. Neutral native-feeling light theme first; reserve option for dark mode later if desired. Sparse typography (system UI font), large target sizes, keyboard-first, restrained accent, gentle 180–220 ms motion respecting reduced-motion preferences. Layout is adaptable during implementation; preserve behavior/information architecture.
 

@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    # Primary target (ADR 002). Builds the full workspace incl. the Tauri app.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Frontend install
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Frontend build (Tauri needs dist/ to exist)
+        working-directory: apps/desktop
+        run: npm run build
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Bindings are up to date
+        shell: bash
+        run: git diff --exit-code -- apps/desktop/src/bindings
+      - name: Frontend typecheck + tests
+        working-directory: apps/desktop
+        run: |
+          npm run typecheck
+          npm test
+
+  core-linux:
+    # Portable crates only; no webview system libs needed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p tamgabul-core -p tamgabul-platform

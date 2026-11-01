@@ -1,6 +1,6 @@
 # Local Context Widget — Başlangıç Rehberi
 
-> **Bu paketin içinde çalışan uygulama yok.** Bunlar coding agent'lara teslim edilebilecek ürün, mimari, görev ve kalite belgeleridir. Çalışma adı **Local Context Widget**, marka adı henüz kararlaştırılmadı; Capsula değil.
+> **Durum:** P0 iskeleti ve tüm arayüz (MOCK veriyle) repoda. Gerçek arama/model altyapısı (P1–P4) henüz yok. Çalıştırmak için `DEVELOPMENT.md`. Çalışma adı **Local Context Widget**, marka adı henüz kararlaştırılmadı; Capsula değil.
 
 ## İndirip nasıl kullanacaksın?
 1. Arşivi Windows bilgisayarında yeni, boş bir Git deposuna çıkar.

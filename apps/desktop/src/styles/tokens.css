@@ -1,0 +1,94 @@
+/* Design tokens — docs/24 §3. Single source for color, radius, shadow, type and motion.
+   Components must use these variables; no raw hex values elsewhere. */
+:root {
+  /* surfaces */
+  --bg: #FAFAF9;
+  --surface: #FFFFFF;
+  --main: #FBFBFA;
+  --sidebar: #F8F8F7;
+  --chip: #F4F4F3;
+  --icon-tile: #F2F2F1;
+  --nav-active: #E7ECF5;
+  --bubble-user: #E3EAF8;
+  --bubble-ai: #F1F1F0;
+  --file-tile: #E6EDFB;
+  --line: #E4E4E2;
+  --line-soft: #ECECEA;
+  --line-row: #F0F0EE;
+  --line-input: #E2E2E0;
+  --scrim: rgba(26, 29, 36, 0.28);
+
+  /* text */
+  --ink: #1A1D24;
+  --ink-2: #3A3D44;
+  --ink-3: #5C6069;
+  --muted: #6B7079;
+  --muted-2: #8A8E96;
+
+  /* accents */
+  --primary: #1F2533;
+  --primary-hover: #2C3446;
+  --on-primary: #FFFFFF;
+  --accent: #4F6FD8;
+  --spark: #8B7FE0;
+  --logo: #3A3D44;
+
+  /* status: dot / soft background / text */
+  --ok: #2EAA4F;
+  --ok-soft: #E9F6EC;
+  --ok-text: #1E7A3A;
+  --warn: #D9952B;
+  --warn-soft: #FBF1E1;
+  --warn-text: #8A5A00;
+  --err: #E5484D;
+  --err-soft: #FDECEC;
+  --err-text: #B42328;
+  --err-line: #F0C9CB;
+  --neutral: #8A8E96;
+  --toggle-on: #2E9E4F;
+  --toggle-off: #E4E4E2;
+  --folder-fill: #FCE7B8;
+  --folder-line: #E0A03A;
+  --mark: #FFF1B8;
+
+  /* radius */
+  --r-pill: 999px;
+  --r-dialog: 16px;
+  --r-card: 14px;
+  --r-panel: 12px;
+  --r-btn: 12px;
+  --r-nav: 10px;
+  --r-field: 10px;
+  --r-icon: 8px;
+
+  /* shadow */
+  --shadow-bar: 0 2px 8px rgba(20, 22, 30, 0.06);
+  --shadow-card: 0 1px 4px rgba(20, 22, 30, 0.04);
+  --shadow-pop: 0 8px 28px rgba(20, 22, 30, 0.14);
+  --shadow-dialog: 0 20px 60px rgba(20, 22, 30, 0.22);
+
+  /* type */
+  --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --fs-hero: 52px;
+  --fs-title: 28px;
+  --fs-card: 19px;
+  --fs-section: 16.5px;
+  --fs-body: 17px;
+  --fs-2: 15.5px;
+  --fs-label: 14.5px;
+  --fs-small: 13.5px;
+  --fs-badge: 12.5px;
+
+  /* layout */
+  --titlebar-h: 54px;
+  --nav-w: 206px;
+  --aside-w: 310px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 200ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur: 0ms; }
+}

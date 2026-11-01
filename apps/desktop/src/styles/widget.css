@@ -1,0 +1,45 @@
+/* Compact widget (W1–W3) + shared voice view. */
+
+.widget {
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 16px;
+}
+.w-head { height: 46px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 16px; user-select: none; }
+.w-brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; }
+.w-head .btns { display: flex; gap: 2px; align-items: center; }
+.w-icon { width: 36px; height: 36px; border: 0; border-radius: var(--r-icon); background: transparent; color: var(--ink-2); display: inline-flex; align-items: center; justify-content: center; }
+.w-icon:hover { background: var(--chip); }
+.w-search { padding: 2px 14px 12px; }
+.searchbar.sb-widget { height: 52px; padding: 0 6px 0 18px; }
+.searchbar.sb-widget input { font-size: 15px; }
+.w-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 4px; display: flex; flex-direction: column; gap: 10px; }
+.w-bubble { padding: 12px 14px; background: var(--bubble-ai); border-radius: var(--r-panel); display: flex; flex-direction: column; gap: 10px; font-size: 14.5px; line-height: 1.45; }
+.w-bubble.notfound { background: var(--surface); border: 1px dashed #D6D6D3; }
+.w-bubble .chip { height: 34px; padding: 0 14px; font-size: 14px; }
+.w-result { padding: 12px; display: flex; gap: 12px; align-items: center; }
+.w-tile { width: 44px; height: 44px; }
+.w-title { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-meta { font-size: 12.5px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-foot { height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 8px; border-top: 1px solid var(--line-soft); margin-top: 10px; }
+.w-link { height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-icon); background: transparent; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.w-link:hover { background: var(--chip); }
+.w-setup { padding: 14px; display: flex; align-items: center; gap: 12px; }
+.w-hint { padding: 18px 6px; text-align: center; font-size: 13.5px; color: var(--muted); }
+.w-recent { display: flex; align-items: center; gap: 10px; padding: 10px 12px; width: 100%; border: 0; background: none; text-align: left; font-size: 14px; color: var(--ink); }
+.w-recent:hover { background: var(--chip); border-radius: var(--r-field); }
+
+/* ---------- voice ---------- */
+.voice { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.voice-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 28px 24px; }
+.voice-ring { width: 104px; height: 104px; border-radius: 50%; border: 0; background: #EEF1F8; display: flex; align-items: center; justify-content: center; padding: 0; }
+.voice-ring.live { animation: pulse 1.6s var(--ease) infinite; }
+.voice-core { width: 72px; height: 72px; border-radius: 50%; background: var(--primary); color: var(--on-primary); display: flex; align-items: center; justify-content: center; }
+.voice-bars { display: flex; align-items: center; gap: 4px; height: 28px; }
+.voice-bars span { width: 4px; background: var(--accent); border-radius: 2px; animation: level 900ms ease-in-out infinite alternate; }
+.voice-state { font-size: 16px; font-weight: 600; }
+.voice-transcript { width: 100%; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-panel); }
+.voice-transcript input { width: 100%; border: 0; padding: 4px 0 0; background: transparent; font-size: 15px; }
+.voice-foot { flex: none; display: flex; justify-content: flex-end; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(79, 111, 216, 0.08); } }
+@keyframes level { to { transform: scaleY(0.4); } }
+@media (prefers-reduced-motion: reduce) { .voice-ring.live, .voice-bars span { animation: none; } }

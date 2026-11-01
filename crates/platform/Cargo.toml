@@ -1,0 +1,10 @@
+[package]
+name = "tamgabul-platform"
+description = "OS adapters (tray/menu bar, platform info) behind traits; real Windows tray lands in P5"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true

@@ -1,0 +1,51 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--bg);
+  font-size: var(--fs-2);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The widget window is transparent so its rounded card can show its corners. */
+body.surface-widget, body.surface-widget #root { background: transparent; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+a { color: inherit; }
+h1, h2, h3, p { margin: 0; }
+ol, ul { margin: 0; padding: 0; list-style: none; }
+kbd {
+  font: inherit;
+  font-size: 0.92em;
+  padding: 1px 8px;
+  border: 1px solid var(--line-input);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+}
+code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.9em; }
+
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+::selection { background: var(--bubble-user); }
+
+/* thin, quiet scrollbars */
+* { scrollbar-width: thin; scrollbar-color: #D6D6D3 transparent; }

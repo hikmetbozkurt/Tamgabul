@@ -1,5 +1,5 @@
 # Model weights and runtimes (never commit — docs/23)
-models/
+/models/
 *.gguf
 *.safetensors
 *.bin
@@ -14,7 +14,7 @@ runtimes/**/bin/
 *.db-shm
 *.sqlite
 *.sqlite3
-data/
+/data/
 ai_lab/private/
 ai_lab/checkpoints/
 ai_lab/runs/
@@ -25,7 +25,7 @@ ai_lab/runs/
 target/
 node_modules/
 dist/
-build/
+/build/
 apps/desktop/src-tauri/target/
 .venv/
 __pycache__/
@@ -38,3 +38,6 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
+
+# Tauri generated schemas
+apps/desktop/src-tauri/gen/

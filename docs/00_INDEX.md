@@ -27,5 +27,6 @@
 | 21 | [User journeys](docs/21_USER_JOURNEYS.md) | Example flows including past-reference |
 | 22 | [Platform matrix](docs/22_CROSS_PLATFORM_MATRIX.md) | Compatibility test matrix |
 | 23 | [Agent handoff](docs/23_AGENT_HANDOFF.md) | Parallel engineering workflow |
+| 24 | [UI/UX plan](docs/24_UI_UX_PLAN.md) | Tasarım tuvali, tokenlar, bileşenler, U0–U9 fazları |
 
 `database/001_initial.sql`: proposed schema, reviewed with SQLite syntax smoke test. `examples/`: config, model manifest, intent schema, evaluation fixture. `agent_tasks/`: first concrete agent tickets. `templates/`: reusable task, ADR and experiment reports. `ai_lab/`: future training protocol. All thresholds initially **targets to validate**, not observed measurements.
