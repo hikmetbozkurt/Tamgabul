@@ -21,3 +21,4 @@ serde_json.workspace = true
 rusqlite.workspace = true
 tamgabul-core = { path = "../../../crates/core" }
 tamgabul-platform = { path = "../../../crates/platform" }
+tamgabul-runtime = { path = "../../../crates/runtime" }

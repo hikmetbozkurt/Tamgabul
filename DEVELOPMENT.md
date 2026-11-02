@@ -32,9 +32,18 @@ Arayüz yalnızca Rust çekirdeğinden gelen **gerçek** durumu gösterir; sahte
 
 ## Modeller
 Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
-- `C:\AI\models\embeddinggemma-2\` → `ggml-org/embeddinggemma-2-GGUF`, **BF16** dosyası (zorunlu)
+- `C:\AI\models\embeddinggemma-2\` → `ggml-org/embeddinggemma-2-GGUF`: `embeddinggemma-2-BF16.gguf` (metin, zorunlu) + `mmproj-embeddinggemma-2-BF16.gguf` (görüntü + ses)
 - `C:\AI\models\gemma-4-e4b\` → Gemma 4 E4B `Q4_K_M` GGUF (isteğe bağlı)
-Çalıştırıcı: llama.cpp `llama-server` (P0-02'de doğrulanacak).
+Çalıştırıcı: llama.cpp `llama-server` (winget: `ggml.llamacpp`). Uygulama onu **sadece iş gelince** başlatır, işi bitince 5 dk boşta kalırsa kapatır; Quit/tepsi "Unload Models" hemen kapatır. Kapatmak = süreç biter, RAM/VRAM işletim sistemine döner.
+
+### P0-02 testi (EmbeddingGemma 2)
+```powershell
+# repo kökünde
+cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\models\embeddinggemma-2
+# llama-server PATH'te değilse:  --server "C:\yol\llama-server.exe"
+# GPU'yu kapatmak için:          --cpu
+```
+Çıktıyı (dosya yolları zaten gizli) rapora ekle. Görsel/ses için varsayılan Windows dosyaları kullanılır; başka dosya için `--image` / `--audio`.
 
 ## Dil
 Arayüz varsayılan **İngilizce**. Settings → Language: bayraklı English / Türkçe. Metinler `apps/desktop/src/i18n/en.json` ve `tr.json` içinde; iki dosyada aynı anahtarlar olmalı (test kontrol eder).
@@ -54,6 +63,7 @@ Rust'taki bir IPC tipi değişince `cargo test -p tamgabul-core` çalıştır ve
 ```text
 crates/core/            model durumu, sağlık kuralı, ayarlar, IPC tipleri (dto.rs), SQLite migration
 crates/platform/        tepsi komutları, widget konumu kuralı, platform bilgisi
+crates/runtime/         model işçileri: GGUF kontrolü, llama-server süreci, isteğe bağlı yükleme, boşta kapatma
 apps/desktop/src-tauri/ Tauri v2: komutlar, iki pencere, tepsi, kısayol, autostart
 apps/desktop/src/
   styles/   tokens.css (renk, köşe, yazı), base, ui, app, widget

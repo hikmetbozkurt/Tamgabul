@@ -1,0 +1,28 @@
+[package]
+name = "tamgabul-runtime"
+description = "Tamgabul model runtime: GGUF probing, supervised llama.cpp workers, on-demand lifecycle with idle unload"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tamgabul-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Plain HTTP to the worker on 127.0.0.1 only. No TLS, no proxy.
+ureq = { version = "2.12", default-features = false, features = ["json"] }
+base64 = "0.22"
+getrandom = "0.3"
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+# Job object with KILL_ON_JOB_CLOSE: workers die with the app, even on crash.
+win32job = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

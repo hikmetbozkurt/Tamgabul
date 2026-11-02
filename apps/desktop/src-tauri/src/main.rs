@@ -6,11 +6,13 @@ mod hotkey;
 mod tray;
 mod windows;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
-use tamgabul_core::{db, settings, settings::AppSettings};
-use tauri::Manager;
+use serde::Serialize;
+use tamgabul_core::{db, model::ModelStatus, settings, settings::AppSettings};
+use tamgabul_runtime::{manager::Listener, ModelManager, ModelSnapshot};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use tauri_plugin_window_state::StateFlags;
 
 pub struct AppState {
@@ -18,6 +20,41 @@ pub struct AppState {
     pub db: Mutex<Option<Connection>>,
     pub settings: Mutex<AppSettings>,
     pub hotkey_active: Mutex<bool>,
+    /// Single lifecycle authority for model workers (docs/05). Nothing is
+    /// started here: workers launch on demand and stop when idle.
+    pub models: Arc<ModelManager>,
+}
+
+/// `model_status` event payload. No paths, no model input.
+#[derive(Serialize, Clone)]
+struct ModelStatusEvent {
+    model_id: String,
+    status: ModelStatus,
+    active: u32,
+    unload_in_secs: Option<u64>,
+    error_code: Option<tamgabul_core::error::ErrorCode>,
+}
+
+fn model_listener(app: AppHandle) -> Listener {
+    Arc::new(move |s: &ModelSnapshot| {
+        let _ = app.emit(
+            "model_status",
+            ModelStatusEvent {
+                model_id: s.id.clone(),
+                status: s.status,
+                active: s.active,
+                unload_in_secs: s.unload_in.map(|d| d.as_secs()),
+                error_code: s.last_error.as_ref().map(|e| e.code()),
+            },
+        );
+    })
+}
+
+/// Stop every model worker and wait until the processes are gone.
+pub fn stop_models(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.models.shutdown();
+    }
 }
 
 fn open_db(app: &tauri::App) -> Option<Connection> {
@@ -62,6 +99,9 @@ fn main() {
                 db: Mutex::new(conn),
                 settings: Mutex::new(loaded.clone()),
                 hotkey_active: Mutex::new(false),
+                models: Arc::new(ModelManager::new(Some(model_listener(
+                    app.handle().clone(),
+                )))),
             });
 
             let active = hotkey::register(app.handle(), &loaded.hotkey).is_ok();
@@ -83,6 +123,13 @@ fn main() {
             commands::quit_app,
             commands::not_implemented,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Tamgabul");
+        .build(tauri::generate_context!())
+        .expect("failed to build Tamgabul")
+        .run(|app, event| {
+            // Any exit path (tray Quit, OS logoff, last-resort exit) ends the
+            // workers. On Windows the Job Object also covers crashes.
+            if let RunEvent::Exit = event {
+                stop_models(app);
+            }
+        });
 }

@@ -4,7 +4,7 @@ use tamgabul_core::settings::Language;
 use tamgabul_platform::TrayCommand;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Wry};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::windows;
 
@@ -60,8 +60,18 @@ pub fn install(app: &AppHandle, lang: Language) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_widget" => windows::show_widget(app),
             "settings" => windows::show_app(app, Some("settings".into())),
-            // Backend phases own the real work; the UI reacts to the event.
-            "toggle_indexing" | "unload_models" => {
+            "unload_models" => {
+                // Stopping a worker waits for its process to exit: off the UI thread.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Some(state) = app.try_state::<crate::AppState>() {
+                        state.models.unload_all();
+                    }
+                    let _ = app.emit("tray_action", "unload_models".to_string());
+                });
+            }
+            // Indexing arrives in P1; the UI reacts to the event.
+            "toggle_indexing" => {
                 let _ = app.emit("tray_action", event.id.as_ref().to_string());
             }
             "quit" => quit(app),
@@ -90,8 +100,9 @@ pub fn relabel(app: &AppHandle, lang: Language) {
     }
 }
 
-/// Real exit: no model workers exist yet (P4); when they do, stop them here first.
+/// Real exit: stop model workers (and wait for their processes) first.
 pub fn quit(app: &AppHandle) {
     crate::hotkey::unregister_all(app);
+    crate::stop_models(app);
     app.exit(0);
 }

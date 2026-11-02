@@ -24,14 +24,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [api, refresh]);
 
-  // Tray menu actions (docs/09): handled by whichever backend is active.
+  // Tray actions and model lifecycle changes are done by the Rust core;
+  // the UI only re-reads state.
   useEffect(() => {
-    const p = on<string>("tray_action", (action) => {
-      if (action === "unload_models") api.unloadAll().catch(() => {});
-      refresh();
-    });
-    return () => { p.then((u) => u()); };
-  }, [api, refresh]);
+    const subs = [on<string>("tray_action", refresh), on("model_status", refresh)];
+    return () => { subs.forEach((p) => p.then((u) => u())); };
+  }, [refresh]);
 
   return <DataCtx.Provider value={{ api, version, refresh }}>{children}</DataCtx.Provider>;
 }
