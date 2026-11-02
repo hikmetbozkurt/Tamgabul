@@ -15,8 +15,7 @@ const notYet = async (command: string): Promise<never> => {
   throw { code: "NOT_IMPLEMENTED", detail: command } satisfies IpcError;
 };
 
-export class RealApi implements Api {
-  readonly mode = "real" as const;
+export class CoreApi implements Api {
   private listeners = new Set<() => void>();
   private unlisten: Array<() => void> = [];
 

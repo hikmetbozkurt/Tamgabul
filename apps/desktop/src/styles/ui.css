@@ -69,7 +69,6 @@ button.chip:hover { background: #ECECEA; }
   background: var(--chip); color: var(--ink-2); white-space: nowrap;
 }
 .badge-err { background: var(--err-soft); color: var(--err-text); }
-.badge-mock { background: var(--mark); color: #6B4E00; height: 24px; letter-spacing: 0.3px; }
 
 /* ---------- toggle ---------- */
 .toggle {

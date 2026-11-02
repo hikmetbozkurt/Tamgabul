@@ -2,7 +2,7 @@
 
 > **Çalışma adı:** Local Context Widget (LCW). Ürün adı **kesinleşmedi**; bu proje Capsula'dan **tamamen ayrıdır** ve **3D kapsül / görsel harita içermez**.
 >
-> **Belge sürümü:** 0.1 / 26 Ekim 2026 • **Durum:** P0 iskeleti ve arayüz (demo veriyle) hazır; arama/model altyapısı (P1–P4) henüz yok. Çalıştırma: [`DEVELOPMENT.md`](DEVELOPMENT.md).
+> **Belge sürümü:** 0.1 / 26 Ekim 2026 • **Durum:** P0 iskeleti ve arayüz hazır; arama/model altyapısı (P1–P4) aşama aşama geliyor. Sahte/demo veri yok. Çalıştırma: [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 ## Bir cümlede ürün
 Windows'ta sistem tepsisinde yaşayan, global kısayolla açılan; kullanıcının izin verdiği yerel dosyaları **EmbeddingGemma 2** ile indeksleyip, sesli/yazılı **çok turlu doğal konuşma** üzerinden bulmasına yardım eden; yerel LLM, STT, TTS ve embedding modellerini kendi içinde ekleyip yöneten **offline-first masaüstü widget**. Aynı kod tabanı sonra macOS'ta test edilecek.
@@ -35,7 +35,7 @@ ai_lab/                    Future EmbeddingGemma 2 adaptation/evals
 migrations/                Versioned SQLite migrations
 models/                    Optional user-imported models in app-data or referenced paths
 ```
-`models/`, gerçek kullanıcı dosyaları, database ve eğitim verileri **git'e eklenmez**. Arayüz şu an MOCK veriyle çalışır; gerçek arama ve model çalıştırma henüz yoktur.
+`models/`, gerçek kullanıcı dosyaları, database ve eğitim verileri **git'e eklenmez**. Arayüz yalnızca gerçek veriyi gösterir; altyapısı gelmemiş bölümler “Not available yet” der.
 
 ## Kapsam dışı — ilk MVP
 Capsula entegrasyonu; mobil uygulama; 3D cluster visualization; bulut account; web crawling; tüm diskleri kendiliğinden tarama; kullanıcı dosyasını yazma/silme; tüm model formatlarının koşulsuz desteği; dağıtık/senkron veritabanı.

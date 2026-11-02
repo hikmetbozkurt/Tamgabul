@@ -1,6 +1,6 @@
 # U0-U1 UI Foundation: design system, app shell, two windows
 
-**Phase:** U0–U1 (merges P5-01 tray/hotkey) • **Owner:** UI • **Status:** DONE (UI against MOCK data; Windows visual check PENDING) • **Dependencies:** P0-01 (done)
+**Phase:** U0–U1 (merges P5-01 tray/hotkey) • **Owner:** UI • **Status:** DONE (Windows visual check by user OK) • **Dependencies:** P0-01 (done)
 
 ## Objective
 The design system from the canvas exists as tokens + React components, and the desktop app has two windows (compact `widget`, expanded `app`) sharing one codebase with a custom title bar, side navigation and page routing. Pages are empty skeletons; real page content is U2+.
@@ -33,9 +33,9 @@ AGENTS.md; docs/20_ADR.md; docs/09_UI_UX.md; **docs/24_UI_UX_PLAN.md** (§1 deci
 Code + automated tests + commands/results + platform/hardware/runtime versions + security/privacy notes. Mark real runtime tests as PENDING until observed. Keep weights and private data out of git.
 
 ### Completion report (docs/23) — 2026-11-02
-- **Summary:** U0–U8 implemented (see docs/24 §11). Two windows, tray, hotkey, autostart, settings persistence are real; search/models/folders/history run on the labelled MOCK store until P1–P4.
+- **Summary:** U0–U8 implemented (see docs/24 §11). Two windows, tray, hotkey, autostart, settings persistence are real; search/models/folders/history show real state; their commands return NOT_IMPLEMENTED until P1–P4. Mock/demo store removed 2026-11-02 (ADR 018).
 - **Files touched:** `apps/desktop/src/**`, `apps/desktop/src-tauri/**`, `crates/core/src/{settings,dto,error,lib}.rs`.
 - **Evidence:** `cargo test --workspace` (70 tests), `cargo clippy -D warnings` clean, `npm run typecheck`, `npm test` (34 tests incl. jsdom render tests), Playwright screenshots of every screen in browser mode, 15 s headless launch on Linux (no panic, DB created).
-- **Known gaps:** Windows visual check, 200 % scaling, transparent widget corners and tray on real Windows are PENDING. No real search/model/scope backend (MOCK ONLY badge shown). Mic never opened.
+- **Known gaps:** Windows visual check, 200 % scaling, transparent widget corners and tray on real Windows are PENDING. No real search/model/scope backend yet. Mic never opened.
 - **Security impact:** capabilities limited to window drag/min/max + dialog open; no fs/shell/http plugins; no network.
-- **Next dependency:** P0-02 runtime spikes, then P1 scopes to replace the MOCK folders store.
+- **Next dependency:** P0-02 runtime spikes, then P1 scopes.

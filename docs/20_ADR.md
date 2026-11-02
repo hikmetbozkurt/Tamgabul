@@ -21,5 +21,7 @@ These decisions represent the user's stated priorities as of 2026-10-26. Changin
 | 015 | Source removal immediate search deny, purge derived data, never source delete | ACCEPTED | Revocable permission implies result revocation |
 | 016 | Manual indexing by default, idle sync optional | PROPOSED | Avoid surprising background resource use |
 | 017 | Default model TTLs and latency targets per docs | PROPOSED | Need test evidence |
+| 018 | No mock, demo or sample data anywhere in the product/UI; screens show only real backend state, unimplemented parts say “Not available yet”. Fakes only inside automated tests | ACCEPTED | User decision 2026-11-02; enterprise-grade honesty |
+| 019 | Runtime: bundled llama.cpp `llama-server` sidecars for both the LLM (GGUF) and EmbeddingGemma 2 (GGUF, BF16 default) | PROPOSED | Confirm in P0-02 spike |
 
 **Versioning rule:** ADR change → update affected interface, tests, schema and roadmap. Never create contradictory duplicated 'truth' in multiple docs without recording priority of latest ADR.

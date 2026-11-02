@@ -7,7 +7,7 @@ A one-off headless spike for E4B/EG2 may start alongside P0; integration work is
 ## P0 — Engineering foundation [BLOCKER]
 - Repo structure, Rust workspace, Tauri v2 React TS shell, lint/test CI, README/AGENTS, i18n, app ID.
 - Run runtime probes on actual hardware: EmbeddingGemma 2 checkpoint text+image, E4B GGUF via bundled llama.cpp, Windows package load/unload, sqlite-vec extension packaging.
-- Acceptance: `cargo test`, `npm test`, mock runtime health; report observed compatibility, no invented performance.
+- Acceptance: `cargo test`, `npm test`, real runtime health; report observed compatibility, no invented performance.
 - Ticket: `agent_tasks/00_BOOTSTRAP.md` and `agent_tasks/01_RUNTIME_SPIKES.md`.
 
 ## P1 — SQLite and sources [BLOCKER]
@@ -50,4 +50,4 @@ A one-off headless spike for E4B/EG2 may start alongside P0; integration work is
 - Baseline benchmark → curated triplets → training pilot on 4080 16GB → held-out eval + regression → generation migration plan → rollback. See `16_LORA_LAB.md`.
 
 ## Parallel-agent boundaries
-P1 SQLite and P0 runtime feasibility can proceed on separate branches. P2 depends on P1 schema and embedding spike. P3 dialogues can be mocked pending P2, but may not claim integrated completion. UI can develop against typed mocks; real tray acceptance needs runtime. One agent owns schema migration at a time.
+P1 SQLite and P0 runtime feasibility can proceed on separate branches. P2 depends on P1 schema and embedding spike. P3 dialogue logic may use test-only fakes inside automated tests pending P2, but may not claim integrated completion. The UI shows only real state (ADR 018); real tray acceptance needs runtime. One agent owns schema migration at a time.

@@ -1,8 +1,9 @@
 //! IPC data shapes for search, models, folders and history (docs/13, docs/24 §7).
 //!
-//! These are the contract the UI is built against. Until the backend phases
-//! (P1–P4) land, the UI fills them from a labelled MOCK store; the Rust
-//! commands answer `NOT_IMPLEMENTED`. Field names are the wire format.
+//! These are the contract the UI is built against. Until a backend phase
+//! (P1–P4) lands, its Rust commands answer `NOT_IMPLEMENTED` and the UI shows
+//! that state honestly — there is no demo or sample data. Field names are the
+//! wire format.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

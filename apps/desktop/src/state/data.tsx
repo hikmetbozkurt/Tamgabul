@@ -2,22 +2,16 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
 import type { Api } from "../ipc/api";
-import { MockApi } from "../ipc/mock";
-import { RealApi } from "../ipc/real";
+import { CoreApi } from "../ipc/core";
 import { on, toIpcError } from "../ipc/bridge";
 import type { IpcError } from "../bindings/IpcError";
-import { useSettings } from "./settings";
 
 type Ctx = { api: Api; version: number; refresh: () => void };
 const DataCtx = createContext<Ctx | null>(null);
 
-/** Picks the MOCK or real backend from settings and re-renders on changes. */
+/** Connects the UI to the Rust core and re-renders when data changes. */
 export function DataProvider({ children }: { children: ReactNode }) {
-  const { settings } = useSettings();
-  const api = useMemo<Api>(
-    () => (settings.demo_data ? new MockApi(settings.demo_scenario) : new RealApi()),
-    [settings.demo_data, settings.demo_scenario],
-  );
+  const api = useMemo<Api>(() => new CoreApi(), []);
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 

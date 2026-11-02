@@ -1,6 +1,6 @@
 # 24 — UI/UX Tasarım ve Uygulama Planı
 
-**Durum:** Tasarım tamam (v1) · UI kodu U0–U8 tamam (MOCK veriyle), U9'un bir kısmı açık — bkz. §11 · **Tarih:** 2 Kasım 2026
+**Durum:** Tasarım tamam (v1) · UI kodu U0–U8 tamam; sahte veri yok (ADR 018), U9'un bir kısmı açık — bkz. §11 · **Tarih:** 2 Kasım 2026
 **Tasarım tuvali:** https://claude.ai/artifact/P7D6wU3f8FeKtoY4F8ors3 (özel; sadece sahibi açabilir)
 **Referans görsel:** `docs/design/reference-expanded.png` — genişletilmiş uygulamanın hedef görünümü.
 
@@ -23,7 +23,7 @@ Bu belge `docs/09_UI_UX.md` içindeki **işlev sözleşmelerini değiştirmez** 
 | D10 | **Arayüz dili varsayılan İngilizce.** Settings → Language'da bayraklı (🇬🇧 / 🇹🇷, SVG) TR/EN seçimi. Tüm metinler `i18n/en.json` + `tr.json`; eksik anahtar İngilizceye düşer. Tepsi menüsü de dile uyar. | Kullanıcı kararı (2 Kasım 2026). |
 | D11 | **Geniş uygulama açılınca widget gizlenir**; aynı anda tek yüzey görünür. | Kullanıcı kararı. |
 | D12 | **Önizle = sağdan açılan panel** (ayrı pencere değil). Esc kapatır. | Kullanıcı kararı. |
-| D9 | **Önce sahte veri (mock).** Tüm ekranlar typed mock IPC ile yapılır, `MOCK ONLY` rozeti görünür. Gerçek motor P1–P4 bitince bağlanır. | docs/23 kuralı. |
+| D9 | **Sahte veri yok (ADR 018).** Ekranlar yalnız Rust çekirdeğinden gelen gerçek durumu gösterir. Altyapısı gelmemiş komutlar `NOT_IMPLEMENTED` döner, arayüz “Not available yet” der. | Kullanıcı kararı (2 Kasım 2026). |
 
 ---
 
@@ -94,7 +94,7 @@ Bu belge `docs/09_UI_UX.md` içindeki **işlev sözleşmelerini değiştirmez** 
 
 ## 4. Bileşenler
 
-`apps/desktop/src/ui/` altında. Her biri `/gallery` geliştirici sayfasında görünür.
+`apps/desktop/src/ui/` altında.
 
 | Bileşen | Varyantlar | Kullanıldığı yer |
 |---|---|---|
@@ -151,11 +151,10 @@ apps/desktop/src/
     onboarding/  A10 + W2
     voice/       W3
   state/         React context + useReducer (ek kütüphane yok); health/models/scopes önbelleği
-  ipc/           typed komutlar + event dinleyici + MOCK katmanı (bindings/ tipleriyle)
+  ipc/           typed komutlar + event dinleyici (bindings/ tipleriyle)
   i18n/          tr.json, en.json
   widget.tsx     widget penceresinin girişi
   app.tsx        app penceresinin girişi
-  gallery.tsx    yalnız geliştirmede: tüm bileşenler
 ```
 
 Sayfa geçişi küçük bir iç yönlendirici ile (`state` + URL hash). Yeni bağımlılıklar: `@fontsource/inter`, `@tauri-apps/plugin-dialog` (dosya/klasör seçici), `@tauri-apps/plugin-global-shortcut`, `@playwright/test` (ekran görüntüsü testi).
@@ -181,9 +180,8 @@ UI fazları bu tipleri **sahte veriyle** kullanır; Rust tarafı P1–P4'te ger�
 Sıra: **U0 → U1 → (U2 · U3 · U4 · U5 · U6 paralel olabilir) → U7 → U8 → U9.** Her faz sahte veriyle biter; gerçek motor bağlantısı ilgili backend fazında yapılır.
 
 ### U0 — Tasarım sistemi temeli
-- `tokens.css`, Inter gömme, `ui/` bileşenleri, `/gallery` sayfası.
-- Playwright ile `/gallery` ekran görüntüsü testi (Windows'ta temel görüntü).
-- **Kabul:** gallery tuvaldeki "Tasarım sistemi" panosuyla gözle aynı; tüm bileşenler klavyeyle kullanılabilir; ağ isteği yok.
+- `tokens.css`, Inter gömme, `ui/` bileşenleri.
+- **Kabul:** bileşenler tuvaldeki "Tasarım sistemi" panosuyla gözle aynı; tüm bileşenler klavyeyle kullanılabilir; ağ isteği yok.
 
 ### U1 — Uygulama kabuğu ve iki pencere
 - `tauri.conf.json`: `widget` + `app` pencereleri; özel başlık çubuğu; sürükleme bölgesi.
@@ -196,7 +194,7 @@ Sıra: **U0 → U1 → (U2 · U3 · U4 · U5 · U6 paralel olabilir) → U7 → 
 - Hero arama, öneri çipleri, son aramalar; sohbet akışı; sonuç kartı (Önizle / Aç / klasörde göster); netleştirme çipleri; "bulamadım" önerileri; takip arama çubuğu.
 - Sağ panel (açık/daraltılmış) ve genişliğe göre davranış (D7).
 - Widget kompakt hâli.
-- **Kabul:** A2 ekranı referans görselle yan yana karşılaştırmada aynı; üç yanıt türü de (sonuç / netleştirme / bulamadım) mock ile görünüyor; klavyeyle baştan sona kullanılabiliyor.
+- **Kabul:** A2 ekranı referans görselle yan yana karşılaştırmada aynı; üç yanıt türü de (sonuç / netleştirme / bulamadım) gerçek arama ile görünüyor; klavyeyle baştan sona kullanılabiliyor.
 
 ### U3 — Models (A5, A6)
 - Model kartları, durum pill'leri, TTL seçimi, Yükle/Boşalt/Doğrula/Değiştir/Kaldır.
@@ -238,7 +236,7 @@ Sıra: **U0 → U1 → (U2 · U3 · U4 · U5 · U6 paralel olabilir) → U7 → 
 - Klavye, ekran okuyucu etiketi, odak sırası kontrol edildi.
 - Boş / yükleniyor / hata hâlleri var.
 - Metinler i18n anahtarında (TR + EN).
-- Sahte veri kullanılıyorsa ekranda `MOCK ONLY` rozeti var.
+- Sahte/demo veri yok; altyapısı olmayan bölüm “Not available yet” der.
 - `npm run typecheck`, `npm test`, `cargo test --workspace` geçiyor.
 
 ---
@@ -256,17 +254,17 @@ Sıra: **U0 → U1 → (U2 · U3 · U4 · U5 · U6 paralel olabilir) → U7 → 
 
 | Faz | Durum | Not |
 |---|---|---|
-| U0 Tasarım sistemi | ✅ | `styles/tokens.css`, Inter gömülü (`@fontsource/inter`), `ui/`, `?surface=gallery` |
+| U0 Tasarım sistemi | ✅ | `styles/tokens.css`, Inter gömülü (`@fontsource/inter`), `ui/` |
 | U1 Kabuk + iki pencere | ✅ | `widget` (şeffaf, köşeli) + `app` (çerçevesiz); özel başlık çubuğu; X = gizle; tepsi menüsü (dile göre); tek örnek; global kısayol + çakışma; autostart; app pencere konumu hatırlanır |
-| U2 Search | ✅ MOCK | başlangıç, sonuç, netleştirme (1–9 kısayolu), bulunamadı, LLM-yok uyarısı, önizleme paneli, sağ panel (daraltılabilir) |
-| U3 Models | ✅ MOCK | 4 kart, 11 durum, TTL, yükle/boşalt, model ekle akışı (adımlar, iptal) |
-| U4 Folders | ✅ MOCK | liste, istatistik, elle/boştayken, C:\ ön izleme + onay, üst/alt kaldırma, yeniden bağla |
-| U5 Memory | ✅ MOCK | gün grupları, filtre, zaman çizelgesi, oturum/tümünü sil, geçmiş anahtarı |
-| U6 Settings | ✅ | dil (bayrak), kısayol yakalama + çakışma, konum, mikrofon modu, autostart, performans, gizlilik, hakkında, demo senaryo seçici |
-| U7 Onboarding | ✅ MOCK | EG2 yoksa app ilk açılışta `#/welcome`; widget W2 |
-| U8 Ses arayüzü | ✅ MOCK | bas-konuş görünümü, süre, düzeltilebilir transkript; **mikrofon kullanılmaz** (STT P6) |
+| U2 Search | ✅ arayüz · ⏳ veri (P2) | başlangıç, sonuç, netleştirme (1–9 kısayolu), bulunamadı, LLM-yok uyarısı, önizleme paneli, sağ panel (daraltılabilir) |
+| U3 Models | ✅ arayüz · ⏳ veri (P4) | 4 kart, 11 durum, TTL, yükle/boşalt, model ekle akışı (adımlar, iptal) |
+| U4 Folders | ✅ arayüz · ⏳ veri (P1) | liste, istatistik, elle/boştayken, C:\ ön izleme + onay, üst/alt kaldırma, yeniden bağla |
+| U5 Memory | ✅ arayüz · ⏳ veri (P3) | gün grupları, filtre, zaman çizelgesi, oturum/tümünü sil, geçmiş anahtarı |
+| U6 Settings | ✅ | dil (bayrak), kısayol yakalama + çakışma, konum, mikrofon modu, autostart, performans, gizlilik, hakkında |
+| U7 Onboarding | ✅ | EG2 yoksa app ilk açılışta `#/welcome`; widget W2 |
+| U8 Ses arayüzü | ✅ arayüz · ⏳ STT (P6) | bas-konuş görünümü, süre, düzeltilebilir transkript; **mikrofon kullanılmaz** (STT P6) |
 | U9 Cila | ⏳ kısmen | erişilebilirlik temel, i18n tam, azaltılmış hareket ✅; Windows'ta %200 ölçek ve gözle tasarım karşılaştırması bekliyor |
 
-**Veri katmanı:** `ipc/api.ts` sözleşmesi; `ipc/mock.ts` (MOCK ONLY, localStorage ile iki pencere arasında ortak) ve `ipc/real.ts` (health + settings gerçek, geri kalanı `NOT_IMPLEMENTED` → arayüzde dürüst "Not available yet"). Settings → Developer → Demo data kapatılınca gerçek (boş) durum görünür.
+**Veri katmanı:** `ipc/api.ts` sözleşmesi; `ipc/core.ts` = Rust çekirdeği (health + settings gerçek, geri kalanı `NOT_IMPLEMENTED` → arayüzde “Not available yet”). Demo/mock katmanı 2 Kasım 2026'da kaldırıldı (ADR 018).
 
 **Tasarım tuvali** hâlâ Türkçe metinli eski taslaktır; görsel kaynak artık kod + bu belgedir.

@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon, Logo } from "../ui/icons";
-import { MockBadge } from "../ui/primitives";
 import { useI18n } from "../i18n";
-import { useData, useResource } from "../state/data";
+import { useResource } from "../state/data";
 import { useSettings } from "../state/settings";
 import { hideSelf, openApp } from "../ipc/bridge";
 import { relativeTime } from "../lib/format";
@@ -15,7 +14,6 @@ import { VoiceView } from "../features/voice/VoiceOverlay";
 /** Compact widget (W1–W3): bottom-right on Windows, top-center on macOS. */
 export function WidgetSurface() {
   const { t, lang } = useI18n();
-  const { api } = useData();
   const health = useResource((a) => a.health());
   const history = useResource((a) => a.listHistory().then((h) => h.slice(0, 3)).catch(() => []));
   const s = useSearch();
@@ -117,7 +115,6 @@ export function WidgetSurface() {
       <div className="w-head" data-tauri-drag-region>
         <div className="w-brand" data-tauri-drag-region><Logo size={20} />Tamgabul</div>
         <div className="btns">
-          {api.mode === "mock" && <MockBadge />}
           {last && !voice && (
             <button type="button" className="w-icon" aria-label={t("search.new")} title={t("search.new")} onClick={s.reset}>
               <Icon name="plus" size={16} stroke={1.8} />

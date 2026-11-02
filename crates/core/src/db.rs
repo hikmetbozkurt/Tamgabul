@@ -318,7 +318,7 @@ mod tests {
         conn.execute(
             "INSERT INTO model_registry(model_id, category, display_name, path, format,
                 runtime_adapter, adapter_version, is_active, status)
-             VALUES ('m1','embedding','EmbeddingGemma 2','x','safetensors','mock','0',1,'READY')",
+             VALUES ('m1','embedding','EmbeddingGemma 2','x','gguf','llama.cpp','0',1,'READY')",
             [],
         )
         .unwrap();

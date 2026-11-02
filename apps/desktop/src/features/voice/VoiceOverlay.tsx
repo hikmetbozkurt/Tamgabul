@@ -1,17 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/icons";
 import { useT } from "../../i18n";
-import { useData } from "../../state/data";
 import { useSettings } from "../../state/settings";
 
 /**
- * Push-to-talk capture view (W3). The real STT runtime arrives in P6; until
- * then this never touches the microphone — the demo shows the flow only.
+ * Push-to-talk capture view (W3). Only reachable when an STT model is ready;
+ * microphone capture and transcription are wired in P6.
  * Visible recording indicator + timer + cancel are functional contracts.
  */
 export function VoiceView({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (text: string) => void }) {
   const t = useT();
-  const { api } = useData();
   const { settings } = useSettings();
   const [phase, setPhase] = useState<"listening" | "review">("listening");
   const [secs, setSecs] = useState(0);
@@ -26,7 +24,7 @@ export function VoiceView({ onCancel, onSubmit }: { onCancel: () => void; onSubm
 
   const stop = () => {
     setPhase("review");
-    setText(api.mode === "mock" ? t("voice.demoTranscript") : "");
+    setText("");
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
@@ -67,7 +65,6 @@ export function VoiceView({ onCancel, onSubmit }: { onCancel: () => void; onSubm
               ? settings.mic_mode === "push_to_talk" ? t("voice.releaseHint") : t("voice.clickHint")
               : t("voice.notStored")}
           </div>
-          {api.mode === "mock" && <div className="small" style={{ marginTop: 6, color: "var(--warn-text)" }}>{t("voice.mockNote")}</div>}
         </div>
         {phase === "review" && (
           <div className="voice-transcript">

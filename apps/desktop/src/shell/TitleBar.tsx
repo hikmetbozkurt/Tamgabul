@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, Logo } from "../ui/icons";
-import { MockBadge, Status } from "../ui/primitives";
+import { Status } from "../ui/primitives";
 import { useT } from "../i18n";
-import { useData, useResource } from "../state/data";
+import { useResource } from "../state/data";
 import { hideSelf, openWidget, toggleMaximize } from "../ipc/bridge";
 import { statusKey } from "../lib/labels";
 import type { StatusTone } from "../bindings/StatusTone";
@@ -12,7 +12,6 @@ const LEVEL_TONE: Record<string, StatusTone> = { ready: "green", degraded: "ambe
 /** Custom title bar (docs/24 D5): drag region, health menu, window buttons. */
 export function TitleBar({ onboarding }: { onboarding?: boolean }) {
   const t = useT();
-  const { api } = useData();
   const health = useResource((a) => a.health());
   const [open, setOpen] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
@@ -41,7 +40,6 @@ export function TitleBar({ onboarding }: { onboarding?: boolean }) {
         <span data-tauri-drag-region>Tamgabul</span>
       </div>
       <div className="titlebar-right">
-        {api.mode === "mock" && <MockBadge />}
         <button
           type="button"
           className="status-trigger"

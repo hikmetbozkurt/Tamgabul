@@ -1,6 +1,6 @@
 # P5-01 Minimal Windows UI, Tray and Hotkey
 
-**Phase:** P5 • **Owner:** UI • **Status:** TODO • **Dependencies:** P0-01; real acceptance needs P2-01 and P4-01 (develop against typed mocks first)
+**Phase:** P5 • **Owner:** UI • **Status:** TODO • **Dependencies:** P0-01; real acceptance needs P2-01 and P4-01 (UI shows real state only; no mock data — ADR 018)
 
 ## Objective
 A minimal, keyboard-first widget that lives in the Windows notification area (including the hidden-icons overflow), hides on close, quits for real from the tray, and exposes honest model/source status. Layout is editable; behavior contracts are not.

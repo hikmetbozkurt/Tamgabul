@@ -52,15 +52,6 @@ pub enum IndexingMode {
     WhenIdle,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../../../apps/desktop/src/bindings/")]
-pub enum DemoScenario {
-    Ready,
-    FirstRun,
-    LlmOff,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export, export_to = "../../../apps/desktop/src/bindings/")]
@@ -74,9 +65,6 @@ pub struct AppSettings {
     pub history_enabled: bool,
     pub history_retention: HistoryRetention,
     pub indexing_mode: IndexingMode,
-    /// MOCK ONLY: show demo data until backend phases P1–P4 land.
-    pub demo_data: bool,
-    pub demo_scenario: DemoScenario,
 }
 
 impl Default for AppSettings {
@@ -90,8 +78,6 @@ impl Default for AppSettings {
             history_enabled: true,
             history_retention: HistoryRetention::Days90,
             indexing_mode: IndexingMode::Manual,
-            demo_data: true,
-            demo_scenario: DemoScenario::Ready,
         }
     }
 }
@@ -159,10 +145,9 @@ mod tests {
     use crate::db::open_and_migrate;
 
     #[test]
-    fn defaults_are_english_and_demo_on() {
+    fn defaults_are_english() {
         let s = AppSettings::default();
         assert_eq!(s.language, Language::En);
-        assert!(s.demo_data);
         assert_eq!(s.hotkey, "Ctrl+Shift+Space");
     }
 
@@ -173,11 +158,20 @@ mod tests {
         assert_eq!(load(&conn).unwrap(), AppSettings::default());
         let s = AppSettings {
             language: Language::Tr,
-            demo_scenario: DemoScenario::FirstRun,
+            mic_mode: MicMode::Toggle,
             ..AppSettings::default()
         };
         save(&conn, &s).unwrap();
         assert_eq!(load(&conn).unwrap(), s);
+    }
+
+    #[test]
+    fn settings_from_older_builds_still_load() {
+        // Fields removed later (e.g. old demo flags) are ignored, not fatal.
+        let s: AppSettings =
+            serde_json::from_str(r#"{"language":"tr","demo_data":true,"demo_scenario":"ready"}"#)
+                .unwrap();
+        assert_eq!(s.language, Language::Tr);
     }
 
     #[test]

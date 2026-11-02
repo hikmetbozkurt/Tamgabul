@@ -1,6 +1,5 @@
-// The contract the UI talks to. Two implementations:
-//  - mock.ts: labelled MOCK ONLY demo data until backend phases P1–P4 land;
-//  - real.ts: the Rust core (health/settings now, the rest NOT_IMPLEMENTED).
+// The contract the UI talks to, implemented by the Rust core (core.ts).
+// Parts whose backend phase has not landed answer NOT_IMPLEMENTED.
 import type { AppHealth } from "../bindings/AppHealth";
 import type { HistorySession } from "../bindings/HistorySession";
 import type { HistoryTurn } from "../bindings/HistoryTurn";
@@ -17,8 +16,7 @@ import type { TtlPolicy } from "../bindings/TtlPolicy";
 import type { ValidationStep } from "../bindings/ValidationStep";
 
 export interface Api {
-  readonly mode: "mock" | "real";
-  /** Notifies when data changed (other window, tray action, timers). */
+  /** Notifies when data changed (other window, tray action, background jobs). */
   subscribe(cb: () => void): () => void;
 
   health(): Promise<AppHealth>;

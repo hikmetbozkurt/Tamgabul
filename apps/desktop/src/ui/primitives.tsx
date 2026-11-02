@@ -180,8 +180,3 @@ export function ErrorState({ error, onRetry }: { error: IpcError; onRetry?: () =
 export function Skeleton({ h = 20, w = "100%", r }: { h?: number; w?: number | string; r?: number }) {
   return <div className="skeleton" style={{ height: h, width: w, borderRadius: r }} aria-hidden="true" />;
 }
-
-export function MockBadge() {
-  const t = useT();
-  return <span className="badge badge-mock" title={t("mock.tooltip")}>MOCK ONLY</span>;
-}

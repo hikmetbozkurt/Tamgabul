@@ -4,7 +4,7 @@ import { useToast } from "../../state/toast";
 import { useT } from "../../i18n";
 import { toIpcError } from "../../ipc/bridge";
 
-/** Open / show-in-folder with honest feedback (mock mode says so). */
+/** Open / show-in-folder with feedback. */
 export function useResultActions() {
   const { api } = useData();
   const toast = useToast();
@@ -13,8 +13,7 @@ export function useResultActions() {
     async (ref: string, reveal: boolean) => {
       try {
         await api.openResult(ref, reveal);
-        const msg = t(reveal ? "result.revealedToast" : "result.openedToast");
-        toast(api.mode === "mock" ? `${msg} ${t("mock.suffix")}` : msg);
+        toast(t(reveal ? "result.revealedToast" : "result.openedToast"));
       } catch (e) {
         toast(t(`error.${toIpcError(e).code}.title`), true);
       }

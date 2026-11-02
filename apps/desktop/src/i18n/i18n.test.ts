@@ -28,7 +28,7 @@ describe("dictionaries", () => {
   });
 
   it("every literal key used in the source exists", () => {
-    const ns = "common|nav|window|privacy|mock|health|category|status|legend|panel|search|result|file|match|preview|voice|memory|models|model|ttl|addModel|folders|revoke|settings|welcome|widget|error";
+    const ns = "common|nav|window|privacy|health|category|status|legend|panel|search|result|file|match|preview|voice|memory|models|model|ttl|addModel|folders|revoke|settings|welcome|widget|error";
     const re = new RegExp(`"((?:${ns})\\.[A-Za-z0-9_.]+)"`, "g");
     const missing: string[] = [];
     for (const f of sourceFiles(join(dirname(fileURLToPath(import.meta.url)), ".."))) {

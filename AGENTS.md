@@ -19,7 +19,7 @@ You are implementing **Local Context Widget**, NOT Capsula. This project has NO 
 - Never delete or overwrite a source file when removing an index or scope.
 - No hidden indexing or mic capture; indexing and audio capture happen only with consent and visible indicators.
 - Windows tray app persists after window closes; explicit Quit actually terminates workers. macOS menu bar behavior must be considered.
-- Changes require tests and no fabricated latency/performance claims. Prefer deterministic logic and mock runtimes for CI.
+- Changes require tests and no fabricated latency/performance claims. Prefer deterministic logic. No mock or demo data in the product or UI (ADR 018); fake runtimes are allowed only inside automated tests and never ship.
 
 ## Agent implementation protocol
 1. Start from an `agent_tasks/*.md` or an issue containing prerequisites, touched files, acceptance criteria and tests.

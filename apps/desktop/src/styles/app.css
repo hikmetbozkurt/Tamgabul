@@ -271,11 +271,3 @@
 .wstep .title { font-size: var(--fs-body); font-weight: 600; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .wstep .desc { font-size: var(--fs-label); color: var(--muted); margin-top: 4px; }
 .welcome-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-
-/* ---------- gallery ---------- */
-.gallery { padding: 48px 56px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 48px; align-content: start; background: var(--bg); min-height: 100vh; }
-.gallery section { display: flex; flex-direction: column; gap: 14px; }
-.gallery .full { grid-column: 1 / -1; }
-.swatches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; font-size: 13px; }
-.swatch { display: flex; gap: 10px; align-items: center; }
-.swatch i { width: 36px; height: 36px; border-radius: var(--r-icon); border: 1px solid var(--line); display: inline-block; }

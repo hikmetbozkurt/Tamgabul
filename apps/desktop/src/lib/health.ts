@@ -1,4 +1,4 @@
-// Mirrors crates/core model.rs + health.rs so demo data obeys the same rules.
+// Mirrors crates/core model.rs + health.rs (used when no core is attached).
 // Tests in lib/health.test.ts keep the two in step.
 import type { AppHealth } from "../bindings/AppHealth";
 import type { ModelCategory } from "../bindings/ModelCategory";

@@ -10,8 +10,6 @@ import { useToast } from "../../state/toast";
 import { formatMb, formatNumber } from "../../lib/format";
 import { isTauri, pickPath, toIpcError } from "../../ipc/bridge";
 
-const SAMPLES = ["C:/", "C:/Projects/Private", "D:/Photos/Screenshots"];
-
 /** Add folder: choose → dry-run preview → explicit grant (docs/07, J07). */
 export function AddFolderDialog({ onClose }: { onClose: () => void }) {
   const { t, lang } = useI18n();
@@ -60,11 +58,6 @@ export function AddFolderDialog({ onClose }: { onClose: () => void }) {
             <input id="scope-path" className="input" style={{ flex: 1 }} value={path} placeholder="C:/Projects" onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && path.trim() && runPreview(path)} />
             {isTauri() && <button type="button" className="btn" onClick={browse}>{t("addModel.browse")}</button>}
           </div>
-          {!isTauri() && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-              {SAMPLES.map((s) => <button key={s} type="button" className="chip chip-meta" style={{ height: 32 }} onClick={() => { setPath(s); runPreview(s); }}>{s}</button>)}
-            </div>
-          )}
         </div>
         <div className="note"><Icon name="info" size={18} /><span>{t("folders.previewNote")}</span></div>
         <div className="dialog-actions">

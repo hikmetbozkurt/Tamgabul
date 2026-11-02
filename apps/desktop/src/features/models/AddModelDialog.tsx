@@ -9,13 +9,8 @@ import { useToast } from "../../state/toast";
 import { isTauri, pickPath, toIpcError } from "../../ipc/bridge";
 import { CATEGORIES } from "../../lib/health";
 
-// Browser preview has no file picker; these sample paths show the flow.
-const SAMPLE: Record<ModelCategory, string> = {
-  embedding: "C:/Models/embeddinggemma-2",
-  llm: "C:/Models/gemma-4-e4b-Q4_K_M.gguf",
-  stt: "C:/Models/whisper-base",
-  tts: "C:/Models/tr_TR-voice.onnx",
-};
+// Only STT models are folders; the others are single files.
+const PICK_DIRECTORY: Record<ModelCategory, boolean> = { embedding: false, llm: false, stt: true, tts: false };
 
 function StepIcon({ state }: { state: ValidationStep["state"] }) {
   if (state === "running") return <span className="spinner" aria-hidden="true" />;
@@ -55,7 +50,7 @@ export function AddModelDialog({ initial, onClose }: { initial: ModelCategory; o
   useEffect(() => () => abort.current?.abort(), []);
 
   const browse = async () => {
-    const p = isTauri() ? await pickPath(category === "embedding" || category === "stt", t("addModel.pickTitle")) : SAMPLE[category];
+    const p = await pickPath(PICK_DIRECTORY[category], t("addModel.pickTitle"));
     if (p) {
       setPath(p);
       validate(p, category);
@@ -107,11 +102,11 @@ export function AddModelDialog({ initial, onClose }: { initial: ModelCategory; o
             className="input"
             style={{ flex: 1 }}
             value={path}
-            placeholder={SAMPLE[category]}
+            placeholder={t("addModel.pathPlaceholder")}
             onChange={(e) => { setPath(e.target.value); setSteps([]); setResult(null); }}
             onKeyDown={(e) => e.key === "Enter" && path.trim() && validate(path, category)}
           />
-          <button type="button" className="btn" onClick={browse}>{t("addModel.browse")}</button>
+          {isTauri() && <button type="button" className="btn" onClick={browse}>{t("addModel.browse")}</button>}
           {path.trim() && !running && result === null && (
             <button type="button" className="btn" onClick={() => validate(path, category)}>{t("addModel.validate")}</button>
           )}

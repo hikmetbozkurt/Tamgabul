@@ -13,8 +13,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   history_enabled: true,
   history_retention: "days90",
   indexing_mode: "manual",
-  demo_data: true,
-  demo_scenario: "ready",
 };
 
 const LS_KEY = "tamgabul.settings";

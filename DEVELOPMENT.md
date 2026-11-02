@@ -25,15 +25,16 @@ Tarayıcıda (Rust çekirdeği olmadan) sadece arayüz:
 npm run dev
 # http://localhost:1420/?surface=app      tam uygulama
 # http://localhost:1420/?surface=widget   widget
-# http://localhost:1420/?surface=gallery  tüm bileşenler (tasarım sistemi)
 ```
 
-## Demo veri (MOCK ONLY)
-Arama, modeller, klasörler ve geçmiş için gerçek altyapı henüz yok (P1–P4). Bu yüzden arayüz varsayılan olarak **örnek veriyle** açılır ve başlıkta sarı `MOCK ONLY` rozeti görünür.
-- Settings → Developer → **Demo data** kapatılırsa gerçek (boş) durum görünür; yapılmamış bölümler "Not available yet" der.
-- Senaryolar: *Everything ready*, *First run* (model yok → karşılama ekranı), *LLM not loaded*.
-- Örnek aramalar: `auction timer`, `the button on the game screen` (netleştirme sorar), `sprint planning`, `react`, rastgele bir şey (bulunamadı).
-- Mikrofon **hiç açılmaz**; ses ekranı sadece akışı gösterir (STT P6'da).
+## Veri
+Arayüz yalnızca Rust çekirdeğinden gelen **gerçek** durumu gösterir; sahte/demo veri yok (ADR 018). Altyapısı henüz gelmemiş bölümler (arama P2, klasörler P1, geçmiş P3, model yükleme P4, ses P6) "Not available yet" der.
+
+## Modeller
+Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
+- `C:\AI\models\embeddinggemma-2\` → `ggml-org/embeddinggemma-2-GGUF`, **BF16** dosyası (zorunlu)
+- `C:\AI\models\gemma-4-e4b\` → Gemma 4 E4B `Q4_K_M` GGUF (isteğe bağlı)
+Çalıştırıcı: llama.cpp `llama-server` (P0-02'de doğrulanacak).
 
 ## Dil
 Arayüz varsayılan **İngilizce**. Settings → Language: bayraklı English / Türkçe. Metinler `apps/desktop/src/i18n/en.json` ve `tr.json` içinde; iki dosyada aynı anahtarlar olmalı (test kontrol eder).
@@ -45,7 +46,7 @@ cargo test --workspace            # Rust testleri + TS tiplerini üretir (apps/d
 cargo clippy --workspace --all-targets -- -D warnings
 cd apps\desktop
 npm run typecheck
-npm test                          # i18n, durum kuralları, mock backend, ekran render testleri
+npm test                          # i18n, durum kuralları, ekran render testleri
 ```
 Rust'taki bir IPC tipi değişince `cargo test -p tamgabul-core` çalıştır ve `src/bindings/` değişikliğini commit et.
 
@@ -59,8 +60,8 @@ apps/desktop/src/
   ui/       ikonlar, bayraklar, ortak bileşenler
   shell/    başlık çubuğu, sol menü, durum paneli, yönlendirme
   features/ search, memory, models, folders, settings, onboarding, voice
-  surfaces/ AppSurface, WidgetSurface, GallerySurface
-  ipc/      api.ts (sözleşme), mock.ts (MOCK ONLY), real.ts (Rust), bridge.ts
+  surfaces/ AppSurface, WidgetSurface
+  ipc/      api.ts (sözleşme), core.ts (Rust çekirdeği), bridge.ts
   state/    ayarlar, veri, bildirim
   i18n/     en.json, tr.json
 database/001_initial.sql   tek şema kaynağı (core bunu gömer)

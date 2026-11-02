@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import type { AppSettings } from "../../bindings/AppSettings";
 import type { PingResponse } from "../../bindings/PingResponse";
-import { Icon } from "../../ui/icons";
 import { Flag } from "../../ui/flags";
-import { Dialog, MockBadge, Segmented, Status, Toggle } from "../../ui/primitives";
+import { Dialog, Segmented, Status, Toggle } from "../../ui/primitives";
 import { useI18n } from "../../i18n";
 import { useData, useResource } from "../../state/data";
 import { useSettings } from "../../state/settings";
@@ -11,7 +10,6 @@ import { useToast } from "../../state/toast";
 import { formatMb } from "../../lib/format";
 import { isLoaded } from "../../lib/health";
 import { call, isTauri, toIpcError } from "../../ipc/bridge";
-import { MockApi } from "../../ipc/mock";
 import { currentSession } from "../../ipc/api";
 
 const MODIFIERS: Record<string, string> = { Control: "Ctrl", Shift: "Shift", Alt: "Alt", Meta: "Win" };
@@ -103,7 +101,6 @@ export function SettingsPage() {
   const wipeAll = async () => {
     try {
       await api.clearHistory();
-      if (api instanceof MockApi) api.reset(settings.demo_scenario);
       currentSession.set(null);
       toast(t("settings.wipedToast"));
     } catch (e) {
@@ -220,32 +217,6 @@ export function SettingsPage() {
             </div>
           </section>
 
-          <section className="card settings-card" aria-labelledby="s-dev" style={{ gridColumn: "1 / -1" }}>
-            <div className="setting-row">
-              <h2 id="s-dev" style={{ display: "flex", alignItems: "center", gap: 10 }}>{t("settings.developer")} {settings.demo_data && <MockBadge />}</h2>
-              <Toggle checked={settings.demo_data} label={t("settings.demo")} onChange={(v) => set({ demo_data: v })} />
-            </div>
-            <p className="small muted" style={{ lineHeight: 1.5 }}>{t("settings.demoBody")}</p>
-            {settings.demo_data && (
-              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ minWidth: 420 }}>
-                  <Segmented
-                    label={t("settings.scenario")}
-                    value={settings.demo_scenario}
-                    onChange={(v) => set({ demo_scenario: v })}
-                    options={[
-                      { value: "ready", label: t("settings.scenario.ready") },
-                      { value: "first_run", label: t("settings.scenario.first_run") },
-                      { value: "llm_off", label: t("settings.scenario.llm_off") },
-                    ]}
-                  />
-                </div>
-                <button type="button" className="btn btn-sm" onClick={() => { if (api instanceof MockApi) { api.reset(settings.demo_scenario); currentSession.set(null); toast(t("settings.demoReset")); } }}>
-                  <Icon name="refresh" size={16} />{t("settings.resetDemo")}
-                </button>
-              </div>
-            )}
-          </section>
         </div>
       </div>
 

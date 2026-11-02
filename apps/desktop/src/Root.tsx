@@ -6,7 +6,6 @@ import { ToastProvider } from "./state/toast";
 import type { Surface } from "./ipc/bridge";
 import { AppSurface } from "./surfaces/AppSurface";
 import { WidgetSurface } from "./surfaces/WidgetSurface";
-import { GallerySurface } from "./surfaces/GallerySurface";
 
 function WithLanguage({ children }: { children: ReactNode }) {
   const { settings } = useSettings();
@@ -22,7 +21,7 @@ export function Root({ surface }: { surface: Surface }) {
       <WithLanguage>
         <DataProvider>
           <ToastProvider>
-            {surface === "widget" ? <WidgetSurface /> : surface === "gallery" ? <GallerySurface /> : <AppSurface />}
+            {surface === "widget" ? <WidgetSurface /> : <AppSurface />}
           </ToastProvider>
         </DataProvider>
       </WithLanguage>

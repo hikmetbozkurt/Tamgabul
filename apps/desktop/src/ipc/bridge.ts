@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { IpcError } from "../bindings/IpcError";
 
-export type Surface = "widget" | "app" | "gallery";
+export type Surface = "widget" | "app";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -12,7 +12,7 @@ export function isTauri(): boolean {
 
 export function currentSurface(): Surface {
   const s = new URLSearchParams(window.location.search).get("surface");
-  return s === "widget" || s === "gallery" ? s : "app";
+  return s === "widget" ? s : "app";
 }
 
 export function isIpcError(e: unknown): e is IpcError {
