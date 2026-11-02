@@ -12,7 +12,7 @@ use std::time::Duration;
 use tamgabul_core::model::ModelStatus;
 use tamgabul_runtime::client::{Client, Endpoint};
 use tamgabul_runtime::eg2;
-use tamgabul_runtime::worker::{Launcher, ProcessLauncher};
+use tamgabul_runtime::worker::ProcessLauncher;
 use tamgabul_runtime::{ModelManager, Policy, RuntimeError, UnloadOutcome};
 
 /// Entry point of the stand-in server process (skipped in normal runs).
@@ -134,7 +134,7 @@ fn startup_crash_reports_the_runtime_log() {
         Duration::from_secs(10),
         Duration::from_secs(1),
     );
-    match l.launch(&AtomicBool::new(false)) {
+    match l.launch_process(&AtomicBool::new(false)) {
         Err(RuntimeError::WorkerExited(msg)) => {
             assert!(msg.contains("failed to load model"), "{msg}")
         }
@@ -156,7 +156,7 @@ fn startup_timeout_terminates_the_process() {
     );
     let t = std::time::Instant::now();
     assert_eq!(
-        l.launch(&AtomicBool::new(false)).err(),
+        l.launch_process(&AtomicBool::new(false)).err(),
         Some(RuntimeError::LoadTimeout)
     );
     assert!(t.elapsed() < Duration::from_secs(5));
@@ -175,5 +175,8 @@ fn cancel_during_startup() {
         Duration::from_secs(1),
     );
     let cancel = AtomicBool::new(true);
-    assert_eq!(l.launch(&cancel).err(), Some(RuntimeError::Cancelled));
+    assert_eq!(
+        l.launch_process(&cancel).err(),
+        Some(RuntimeError::Cancelled)
+    );
 }
