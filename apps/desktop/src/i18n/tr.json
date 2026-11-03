@@ -478,5 +478,8 @@
   "settings.licensesNote": "Tüm bağımlılıkların listesi kaynak kodundaki Cargo.lock ve package-lock.json dosyalarında.",
   "settings.licenseKind.model": "Model",
   "settings.licenseKind.runtime": "Çalıştırıcı",
-  "settings.licenseKind.library": "Kütüphane"
+  "settings.licenseKind.library": "Kütüphane",
+  "search.summaryTitle": "Gösterilen dosyalardan özet (yerel LLM)",
+  "search.citeLabel": "Kaynak {n}: {file}",
+  "search.notice.prior_not_accessible": "Daha önce uyan bir dosya göstermiştim ama klasörünün izni kaldırıldığı için onu tekrar gösteremiyorum."
 }

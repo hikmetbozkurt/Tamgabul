@@ -1,0 +1,6 @@
+INVOICE INV-2291
+Service: VPS hosting, 2 vCPU / 4 GB RAM
+Period: October 2026
+Amount due: 19.99 EUR
+Due date: 15 November 2026
+Paid by card ending 4242

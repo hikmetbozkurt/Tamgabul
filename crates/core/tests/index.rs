@@ -822,7 +822,9 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
             plan: &plan,
             choices: &[],
             direct: Some(&direct),
+            summary: None,
             picked_by_llm: true,
+            notice: None,
         },
         Some(&g),
     )
@@ -978,7 +980,9 @@ fn clarify_turns_and_context_are_kept_in_history() {
             plan: &p1,
             choices: &[],
             direct: None,
+            summary: None,
             picked_by_llm: false,
+            notice: None,
         },
         Some(&g),
     )
@@ -1011,7 +1015,9 @@ fn clarify_turns_and_context_are_kept_in_history() {
             plan: &p2,
             choices: &choices,
             direct: None,
+            summary: None,
             picked_by_llm: false,
+            notice: None,
         },
         Some(&g),
     )
@@ -1170,4 +1176,174 @@ fn retention_removes_only_old_conversations() {
         .map(Result::unwrap)
         .collect();
     assert_eq!(left, [fresh]);
+}
+
+// ---------------------------------------------------------------- engine
+
+use tamgabul_core::engine::{self, Query, QueryModels};
+
+/// Test-only models: no embedding; the LLM answers from a script keyed by
+/// which prompt it got (plan vs pick).
+struct FakeModels {
+    llm: bool,
+    pick: serde_json::Value,
+}
+
+impl QueryModels for FakeModels {
+    fn embed_query(&self, _text: &str) -> Option<Vec<f32>> {
+        None
+    }
+    fn has_llm(&self) -> bool {
+        self.llm
+    }
+    fn llm_json(
+        &self,
+        system: &str,
+        _user: &str,
+        _schema: &serde_json::Value,
+        _max: u32,
+    ) -> Option<serde_json::Value> {
+        if system.contains("search plan") {
+            Some(serde_json::json!({
+                "search_text": "", "keywords": [], "exclude": [], "file_type": "any",
+                "date": "any", "intent": "search", "clarify_question": "", "clarify_options": []
+            }))
+        } else {
+            Some(self.pick.clone())
+        }
+    }
+}
+
+fn ask(e: &Env, models: &dyn QueryModels, text: &str, session: Option<&str>) -> engine::Outcome {
+    let ctx = history::context(&e.conn, session).unwrap();
+    engine::run(
+        &e.conn,
+        Some(&e.generation),
+        models,
+        &Query {
+            text,
+            ctx: &ctx,
+            allow_clarify: true,
+            now: 1_793_700_000,
+            utc_offset: 0,
+        },
+    )
+    .unwrap()
+}
+
+fn record(e: &mut Env, session: &str, text: &str, out: &engine::Outcome, scope: &str) {
+    let shown: Vec<ShownResult> = out
+        .found
+        .iter()
+        .map(|f| ShownResult {
+            hit: &f.hit,
+            scope_id: Some(scope.to_string()),
+            title: f.resolved.card.title.clone(),
+        })
+        .collect();
+    history::record_search(
+        &mut e.conn,
+        session,
+        text,
+        &Answer {
+            kind: out.kind.clone(),
+            results: &shown,
+            plan: &out.plan,
+            choices: &out.choices,
+            direct: out.direct.as_ref(),
+            summary: out.summary.as_ref(),
+            picked_by_llm: out.picked_by_llm,
+            notice: out.notice.as_deref(),
+        },
+        None,
+    )
+    .unwrap();
+}
+
+#[test]
+fn earlier_results_are_found_from_history_and_hidden_after_revoke() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    let none = FakeModels {
+        llm: false,
+        pick: serde_json::Value::Null,
+    };
+    let session = history::ensure_session(&e.conn, None, true).unwrap();
+    let first = ask(&e, &none, "budget review", Some(&session));
+    assert_eq!(first.found[0].resolved.card.title, "report.pdf");
+    record(&mut e, &session, "budget review", &first, &s.scope_id);
+
+    // A new conversation: "you found me the budget file".
+    let again = ask(&e, &none, "geçen bana budget dosyasını bulmuştun", None);
+    assert_eq!(
+        again.plan.intent,
+        tamgabul_core::understand::PlanIntent::LookupPrior
+    );
+    assert_eq!(again.found[0].resolved.card.title, "report.pdf");
+    assert_eq!(again.found[0].hit.reason, Reason::Previous);
+    assert_eq!(again.found[0].resolved.card.match_reason, "previous_result");
+
+    // After revoke: nothing revealed, the user is told why.
+    store::begin_revoke(&mut e.conn, &s.scope_id, RevokeMode::RemoveAndPurge, false).unwrap();
+    while !store::pending_purges(&e.conn).unwrap().is_empty() {
+        for p in store::pending_purges(&e.conn).unwrap() {
+            store::run_purge(&mut e.conn, &p).unwrap();
+        }
+    }
+    let gone = ask(&e, &none, "geçen bana budget dosyasını bulmuştun", None);
+    assert!(gone.found.is_empty());
+    assert_eq!(gone.notice.as_deref(), Some("prior_not_accessible"));
+}
+
+#[test]
+fn llm_pick_keeps_matches_and_cites_them_in_a_summary() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    // "fatura numarasi" matches several OCR'd files; the LLM keeps #2.
+    let pick = serde_json::json!({
+        "relevant": ["2"], "answer": "", "answer_from": "none",
+        "summary": "Fatura numarası görselde yazıyor [2]."
+    });
+    let m = FakeModels { llm: true, pick };
+    let out = ask(&e, &m, "fatura numarasi", None);
+    assert!(out.picked_by_llm);
+    assert_eq!(out.found.len(), 1);
+    let sum = out.summary.as_ref().unwrap();
+    assert_eq!(sum.text, "Fatura numarası görselde yazıyor [1].");
+    assert_eq!(sum.sources, [out.found[0].resolved.card.result_ref.clone()]);
+
+    // Stored and rebuilt from history.
+    let session = history::ensure_session(&e.conn, None, true).unwrap();
+    record(&mut e, &session, "fatura numarasi", &out, &s.scope_id);
+    let turns = history::session_turns(&e.conn, &session).unwrap();
+    assert_eq!(turns[1].summary.as_ref(), Some(sum));
+
+    // A summary citing nothing is dropped; the pick still applies.
+    let m = FakeModels {
+        llm: true,
+        pick: serde_json::json!({"relevant": ["1"], "answer": "", "answer_from": "none", "summary": "Uncited."}),
+    };
+    let out = ask(&e, &m, "fatura numarasi", None);
+    assert!(out.summary.is_none());
+    assert_eq!(out.found.len(), 1);
+}
+
+#[test]
+fn without_llm_weak_tail_hits_are_cut() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    let none = FakeModels {
+        llm: false,
+        pick: serde_json::Value::Null,
+    };
+    let out = ask(&e, &none, "budget review", None);
+    let best = out.found[0].hit.score;
+    assert!(out
+        .found
+        .iter()
+        .all(|f| f.hit.score >= best * engine::RELATIVE_FLOOR));
+    assert!(!out.picked_by_llm);
 }

@@ -48,6 +48,13 @@ ts_export! {
         pub result_ref: String,
     }
 
+    /// Short LLM summary of the shown results. Every `[k]` marker in `text`
+    /// points at `sources[k-1]`, which is a shown result.
+    pub struct Summary {
+        pub text: String,
+        pub sources: Vec<String>,
+    }
+
     /// What the request was understood as, shown under the answer so the
     /// user can see (and correct) filters and added words.
     pub struct Understood {
@@ -92,8 +99,12 @@ ts_export! {
         pub question: Option<String>,
         pub understood: Option<Understood>,
         pub answer: Option<DirectAnswer>,
+        pub summary: Option<Summary>,
         /// The LLM checked the candidates and picked these.
         pub picked_by_llm: bool,
+        /// Extra line for the answer, e.g. "prior_not_accessible": earlier
+        /// results matched but their folder is no longer allowed.
+        pub notice: Option<String>,
         /// True when no LLM helped with this request (none registered, or
         /// it failed); rules-only understanding was used.
         pub degraded_llm: bool,
@@ -257,7 +268,9 @@ ts_export! {
         pub question: Option<String>,
         pub understood: Option<Understood>,
         pub answer: Option<DirectAnswer>,
+        pub summary: Option<Summary>,
         pub picked_by_llm: bool,
+        pub notice: Option<String>,
     }
 }
 

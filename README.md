@@ -50,6 +50,8 @@
 | **Image descriptions** | With the LLM's vision projector, every image is described once during the scan (what it is, important visible text, search words in both languages). The description is searchable like any text. |
 | **Reads many formats** | Text and code, Markdown, HTML/XML, RTF, DOCX/PPTX/XLSX, ODT/ODP/ODS, PDF (text layer + OCR for scanned pages), images, audio. See [supported files](#supported-files). |
 | **OCR** | Text in screenshots and scanned PDFs through Windows OCR, in the OCR languages installed on your system. |
+| **Earlier results** | “The file you showed me last week” looks in search history first and re-checks permissions; if that folder was revoked, it says so without revealing the file. |
+| **Cited summaries** | With the LLM, a short summary of the picked files where every fact links to the file it came from; “summarize …” requests get a longer one. |
 | **Conversation memory** | Sessions, requests and shown results are kept in local SQLite. Results are stored as references and re-checked on every read, so a revoked folder disappears from old conversations too. History can be turned off. |
 | **Tray widget** | Lives in the system tray. `Ctrl + Shift + Space` opens a compact widget, which expands to the full app. Closing hides to the tray; *Quit* stops every model worker. |
 | **Two languages** | English and Turkish UI. |
@@ -218,7 +220,7 @@ More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish). Engineering
 
 - **Pre-alpha.** It is built and tested on Windows. macOS is planned (same codebase), and Linux has no OS services (OCR, extra codecs, PDF rendering) yet.
 - **No installer.** `llama-server` comes from winget, and models are added by hand.
-- **No numbers yet.** Load time, memory, scan speed and search quality have not been benchmarked. The first scan with image descriptions is noticeably slower, because the LLM looks at every image once.
+- **No numbers yet.** Load time, memory, scan speed and search quality have not been benchmarked on a real machine. A bilingual evaluation set and runner are in [`examples/eval/`](examples/eval/README.md). The first scan with image descriptions is noticeably slower, because the LLM looks at every image once.
 - **Audio** is found by the meaning of the sound and by file name. There is no speech-to-text yet.
 - **Voice input/output (STT/TTS)** is not implemented.
 - **Folder watching** is not implemented. Rescan a folder to pick up changes (only changed files are processed).

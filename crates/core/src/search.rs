@@ -40,6 +40,8 @@ pub enum Reason {
     Filter,
     /// Words found in the image description written at scan time.
     Caption,
+    /// Shown in an earlier search (found from search history).
+    Previous,
 }
 
 impl Reason {
@@ -53,6 +55,7 @@ impl Reason {
             Reason::Ocr => "ocr",
             Reason::Filter => "filter",
             Reason::Caption => "caption",
+            Reason::Previous => "previous_result",
         }
     }
 }
@@ -159,6 +162,11 @@ const STOP_WORDS: &[&str] = &[
     "was",
     "were",
     "which",
+    "gecen",
+    "once",
+    "onceden",
+    "daha",
+    "sefer",
 ];
 
 /// Words worth matching: trimmed of punctuation, 3+ characters (trigram FTS),
@@ -194,10 +202,6 @@ fn fts_query(terms: &[String]) -> Option<String> {
     )
 }
 
-fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
 /// Which kind of embedding a chunk has. Cosines between a text query and
 /// image or audio vectors sit on a different scale than text-to-text, so
 /// each group is banded against its own best match.
@@ -209,46 +213,26 @@ fn vector_group(modality: &str) -> Reason {
     }
 }
 
-/// Top chunks by cosine (vectors are L2-normalized), per modality group.
+/// Top chunks by cosine (vectors are L2-normalized), per modality group,
+/// from the in-memory index (`vindex`): int8 scan + exact re-scoring.
 fn vector_candidates(
     conn: &Connection,
     generation: &str,
     q: &[f32],
 ) -> Result<Vec<(i64, String, f32, Reason)>, IpcError> {
-    let mut st = conn
-        .prepare(
-            "SELECT e.chunk_id, c.document_id, e.vector, c.modality FROM embedding_records e
-             JOIN chunks c ON c.chunk_id = e.chunk_id WHERE e.generation_id = ?1",
-        )
-        .map_err(err)?;
-    let mut rows = st.query([generation]).map_err(err)?;
-    let mut all: Vec<(i64, String, f32, Reason)> = Vec::new();
-    while let Some(r) = rows.next().map_err(err)? {
-        let blob: Vec<u8> = r.get(2).map_err(err)?;
-        let v = store::vector_from_bytes(&blob);
-        if v.len() != q.len() {
-            continue;
-        }
-        let s = dot(q, &v);
-        let modality: String = r.get(3).map_err(err)?;
-        all.push((
-            r.get(0).map_err(err)?,
-            r.get(1).map_err(err)?,
-            s,
-            vector_group(&modality),
-        ));
-    }
-    all.sort_by(|a, b| b.2.total_cmp(&a.2));
-    let mut out = Vec::new();
-    for group in [Reason::Semantic, Reason::Image, Reason::Audio] {
-        out.extend(
-            all.iter()
-                .filter(|c| c.3 == group)
-                .take(CANDIDATES)
-                .cloned(),
-        );
-    }
-    Ok(out)
+    let idx = crate::vindex::for_generation(conn, generation)?;
+    Ok(idx
+        .search(conn, q, CANDIDATES)?
+        .into_iter()
+        .map(|(r, s)| {
+            (
+                r.chunk_id,
+                r.document_id.to_string(),
+                s,
+                vector_group(&r.modality),
+            )
+        })
+        .collect())
 }
 
 fn keyword_candidates(

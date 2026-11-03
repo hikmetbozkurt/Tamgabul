@@ -50,6 +50,8 @@
 | **Görsel açıklamaları** | LLM'in görsel okuyucusu ile her görsel tarama sırasında bir kere açıklanır: ne olduğu, üzerindeki önemli yazılar ve iki dilde arama kelimeleri. Açıklama her metin gibi aranabilir. |
 | **Birçok format** | Metin ve kod, Markdown, HTML/XML, RTF, DOCX/PPTX/XLSX, ODT/ODP/ODS, PDF (metin katmanı + taranmış sayfalar için OCR), görseller, ses. Bkz. [desteklenen dosyalar](#desteklenen-dosyalar). |
 | **OCR** | Ekran görüntülerindeki ve taranmış PDF'lerdeki yazı, sisteminde kurulu OCR dilleriyle Windows OCR üzerinden okunur. |
+| **Önceki sonuçlar** | “Geçen bana bulmuştun” istekleri önce arama geçmişine bakar ve izinleri yeniden kontrol eder; klasörün izni kaldırıldıysa dosyayı göstermeden bunu söyler. |
+| **Kaynaklı özetler** | LLM ile seçilen dosyaların kısa özeti; her bilgi geldiği dosyaya bağlanır. “… özetle” isteklerinde daha uzun özet yazılır. |
 | **Konuşma hafızası** | Oturumlar, istekler ve gösterilen sonuçlar yerel SQLite'ta tutulur. Sonuçlar referans olarak saklanır ve her okumada yeniden kontrol edilir; izni kaldırılan bir klasör eski konuşmalardan da kaybolur. Geçmiş kapatılabilir. |
 | **Tepsi widget'ı** | Sistem tepsisinde yaşar. `Ctrl + Shift + Space` küçük widget'ı açar, widget tam uygulamaya genişler. Kapatınca tepsiye gizlenir; *Quit* tüm model süreçlerini kapatır. |
 | **İki dil** | İngilizce ve Türkçe arayüz. |
@@ -218,7 +220,7 @@ Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md) dosyasında. Mühendislik kararl
 
 - **Pre-alpha.** Windows'ta derlenip test ediliyor. macOS planlı (aynı kod tabanı); Linux'ta henüz işletim sistemi servisleri (OCR, ek kodekler, PDF çizimi) yok.
 - **Kurulum dosyası yok.** `llama-server` winget'ten gelir, modeller elle eklenir.
-- **Henüz ölçüm yok.** Yükleme süresi, bellek, tarama hızı ve arama kalitesi ölçülmedi. Görsel açıklamalı ilk tarama belirgin şekilde daha yavaştır, çünkü LLM her görsele bir kere bakar.
+- **Henüz ölçüm yok.** Yükleme süresi, bellek, tarama hızı ve arama kalitesi gerçek bir makinede ölçülmedi. İki dilli değerlendirme seti ve çalıştırıcısı [`examples/eval/`](examples/eval/README.md) klasöründe. Görsel açıklamalı ilk tarama belirgin şekilde daha yavaştır, çünkü LLM her görsele bir kere bakar.
 - **Ses dosyaları** sesin anlamından ve dosya adından bulunur; konuşmayı yazıya çevirme (STT) henüz yok.
 - **Sesli giriş/çıkış (STT/TTS)** henüz yapılmadı.
 - **Klasör izleme** henüz yok. Değişiklikler için klasörü yeniden tara (yalnızca değişen dosyalar işlenir).

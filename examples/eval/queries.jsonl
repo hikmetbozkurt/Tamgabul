@@ -1,0 +1,41 @@
+{"id": "k01", "query": "elektrik faturası", "kind": "keyword", "expect": ["fatura_elektrik_ekim.txt"]}
+{"id": "k02", "query": "kasko poliçe", "kind": "keyword", "expect": ["kasko_policesi.txt"]}
+{"id": "k03", "query": "auction timer", "kind": "keyword", "expect": ["auction_timer_bug.md"]}
+{"id": "k04", "query": "mercimek çorbası", "kind": "keyword", "expect": ["recipe_mercimek.md"]}
+{"id": "k05", "query": "pancakes", "kind": "keyword", "expect": ["recipe_pancakes.md"]}
+{"id": "k06", "query": "router SSID", "kind": "keyword", "expect": ["wifi_router_setup.txt"]}
+{"id": "k07", "query": "garanti belgesi", "kind": "keyword", "expect": ["laptop_garanti_belgesi.txt"]}
+{"id": "k08", "query": "password policy", "kind": "keyword", "expect": ["password_policy.html"]}
+{"id": "k09", "query": "kira sözleşmesi", "kind": "keyword", "expect": ["kira_sozlesmesi_2025.md"]}
+{"id": "k10", "query": "toplanti notlari", "kind": "keyword", "expect": ["toplanti_notlari_sprint14.md"]}
+{"id": "k11", "query": "GWF0123456789", "kind": "keyword", "expect": ["uk_visa_notes.txt"]}
+{"id": "k12", "query": "Colosseum", "kind": "keyword", "expect": ["travel_itinerary_rome.md"]}
+{"id": "p01", "query": "ev kiramı ne kadar ödüyorum", "kind": "paraphrase", "expect": ["kira_sozlesmesi_2025.md"]}
+{"id": "p02", "query": "araba sigortamın bitiş tarihi", "kind": "paraphrase", "expect": ["kasko_policesi.txt"]}
+{"id": "p03", "query": "the bug where the countdown resets on a late bid", "kind": "paraphrase", "expect": ["auction_timer_bug.md"]}
+{"id": "p04", "query": "dişçiye ne zaman gidiyorum", "kind": "paraphrase", "expect": ["dis_randevusu.txt"]}
+{"id": "p05", "query": "what temperature do I print PLA at", "kind": "paraphrase", "expect": ["3d_print_settings_p1s.md"]}
+{"id": "p06", "query": "hafta sonu adalara gitme planı", "kind": "paraphrase", "expect": ["istanbul_gezi_plani.md"]}
+{"id": "p07", "query": "okumak istediğim romanlar", "kind": "paraphrase", "expect": ["kitap_listesi.md"]}
+{"id": "p08", "query": "how do I make breakfast crepes", "kind": "paraphrase", "expect": ["recipe_pancakes.md"]}
+{"id": "p09", "query": "infrastructure costs went over plan", "kind": "paraphrase", "expect": ["meeting_minutes_budget_q3.md"]}
+{"id": "p10", "query": "yeni pasaport için gereken belgeler", "kind": "cross_lingual", "expect": ["passport_renewal_checklist.md"]}
+{"id": "c01", "query": "my rental contract", "kind": "cross_lingual", "expect": ["kira_sozlesmesi_2025.md"]}
+{"id": "c02", "query": "İngiltere vizesi", "kind": "cross_lingual", "expect": ["uk_visa_notes.txt"]}
+{"id": "c03", "query": "electricity bill", "kind": "cross_lingual", "expect": ["fatura_elektrik_ekim.txt"]}
+{"id": "c04", "query": "sunucu faturası", "kind": "cross_lingual", "expect": ["invoice_hosting_oct.txt"]}
+{"id": "c05", "query": "lentil soup recipe", "kind": "cross_lingual", "expect": ["recipe_mercimek.md"]}
+{"id": "c06", "query": "my resume", "kind": "cross_lingual", "expect": ["cv_english.md", "ozgecmis.md"]}
+{"id": "c07", "query": "chess clock", "kind": "cross_lingual", "expect": ["chess_timer_design.md"]}
+{"id": "c08", "query": "şifre kuralları", "kind": "cross_lingual", "expect": ["password_policy.html"]}
+{"id": "c09", "query": "laptop warranty", "kind": "cross_lingual", "expect": ["laptop_garanti_belgesi.txt"]}
+{"id": "c10", "query": "Roma seyahati uçuş saatleri", "kind": "cross_lingual", "expect": ["travel_itinerary_rome.md"]}
+{"id": "q01", "query": "when was my uk visa", "kind": "question", "expect": ["uk_visa_notes.txt"]}
+{"id": "q02", "query": "elektrik faturasının son ödeme günü ne", "kind": "question", "expect": ["fatura_elektrik_ekim.txt"]}
+{"id": "q03", "query": "how much is the hosting invoice", "kind": "question", "expect": ["invoice_hosting_oct.txt"]}
+{"id": "q04", "query": "vergi beyannamesini ne zaman verdim", "kind": "question", "expect": ["vergi_beyannamesi_2025.txt"]}
+{"id": "t01", "query": "kria sözlesmesi", "kind": "typo", "expect": ["kira_sozlesmesi_2025.md"]}
+{"id": "t02", "query": "pasport renewl", "kind": "typo", "expect": ["passport_renewal_checklist.md"]}
+{"id": "t03", "query": "mercmek corbasi", "kind": "typo", "expect": ["recipe_mercimek.md"]}
+{"id": "n01", "query": "mars kolonisi bütçe tablosu", "kind": "none", "expect": []}
+{"id": "n02", "query": "wedding guest list", "kind": "none", "expect": []}

@@ -478,5 +478,8 @@
   "settings.licensesNote": "The complete dependency list is in Cargo.lock and package-lock.json in the source code.",
   "settings.licenseKind.model": "Model",
   "settings.licenseKind.runtime": "Runtime",
-  "settings.licenseKind.library": "Library"
+  "settings.licenseKind.library": "Library",
+  "search.summaryTitle": "Summary from the shown files (local LLM)",
+  "search.citeLabel": "Source {n}: {file}",
+  "search.notice.prior_not_accessible": "I showed a matching file before, but its folder is no longer allowed, so I can't show it again."
 }

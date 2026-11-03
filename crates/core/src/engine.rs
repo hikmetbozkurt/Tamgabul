@@ -1,0 +1,303 @@
+//! One search request end to end (docs/08 retrieval plan), shared by the
+//! app and the evaluation runner so both measure the same thing.
+//!
+//! 1. Understand: rules, plus the optional LLM plan (in parallel with the
+//!    first query embedding).
+//! 2. "You showed me before" requests look in search history first.
+//! 3. Retrieve: vectors + words + names, filtered and re-authorized.
+//! 4. Pick: the LLM keeps the candidates that answer the request, may give
+//!    a one-sentence answer and writes a cited summary. Without the LLM,
+//!    weak tail hits are cut.
+//!
+//! Models are reached through [`QueryModels`]; this module never talks to
+//! a runtime directly and does not record history.
+
+use rusqlite::Connection;
+use serde_json::Value;
+
+use crate::dto::{Choice, DirectAnswer, SearchKind, Summary};
+use crate::error::IpcError;
+use crate::history::{self, SessionContext};
+use crate::rerank;
+use crate::search::{self, Acl, DocFilter, Hit, Resolved};
+use crate::understand::{self, Plan, PlanIntent};
+
+pub const RESULT_LIMIT: usize = 10;
+/// Candidates the LLM looks at before picking.
+pub const PICK_POOL: usize = rerank::MAX_CANDIDATES;
+/// Without an LLM: hide hits weaker than this share of the best score
+/// (scores are rank statistics; this is relative, not a calibrated cutoff).
+pub const RELATIVE_FLOOR: f64 = 0.5;
+/// When the LLM looked and found no clear match, show only this many.
+pub const UNSURE_SHOW: usize = 3;
+const PRIOR_SHOW: usize = 5;
+const PLAN_TOKENS: u32 = 320;
+
+/// Models a search may use. Implementations start models on demand and
+/// answer `None` when one is missing or fails (the search goes on).
+pub trait QueryModels: Sync {
+    /// L2-normalized query vector.
+    fn embed_query(&self, text: &str) -> Option<Vec<f32>>;
+    fn has_llm(&self) -> bool;
+    /// One grammar-constrained JSON answer.
+    fn llm_json(&self, system: &str, user: &str, schema: &Value, max_tokens: u32) -> Option<Value>;
+}
+
+pub struct Query<'a> {
+    /// The full request (a picked clarification option is already joined
+    /// to the request it answered).
+    pub text: &'a str,
+    pub ctx: &'a SessionContext,
+    pub allow_clarify: bool,
+    pub now: i64,
+    /// Seconds east of UTC on the user's clock.
+    pub utc_offset: i64,
+}
+
+pub struct Found {
+    pub hit: Hit,
+    pub resolved: Resolved,
+}
+
+pub struct Outcome {
+    pub plan: Plan,
+    pub kind: SearchKind,
+    pub choices: Vec<Choice>,
+    pub found: Vec<Found>,
+    pub direct: Option<DirectAnswer>,
+    pub summary: Option<Summary>,
+    pub picked_by_llm: bool,
+    pub notice: Option<String>,
+}
+
+fn llm_plan(models: &dyn QueryModels, q: &Query<'_>) -> Option<understand::LlmPlan> {
+    let (system, user) = understand::llm_messages(q.text, &q.ctx.prior, &q.ctx.active);
+    let v = models.llm_json(&system, &user, &understand::llm_schema(), PLAN_TOKENS)?;
+    understand::parse_llm(&v).ok()
+}
+
+/// First text of a document (several chunks), for "summarize" requests.
+fn doc_text(conn: &Connection, doc: &str, max: usize) -> Option<String> {
+    let mut st = conn
+        .prepare_cached(
+            "SELECT text FROM chunks WHERE document_id = ?1 AND text IS NOT NULL ORDER BY ordinal LIMIT 4",
+        )
+        .ok()?;
+    let parts: Vec<String> = st
+        .query_map([doc], |r| r.get(0))
+        .ok()?
+        .filter_map(Result::ok)
+        .collect();
+    let mut s = parts.join("\n");
+    if let Some((i, _)) = s.char_indices().nth(max) {
+        s.truncate(i);
+    }
+    (!s.is_empty()).then_some(s)
+}
+
+fn candidates(conn: &Connection, found: &[Found], mode: rerank::Mode) -> Vec<rerank::Candidate> {
+    found
+        .iter()
+        .take(rerank::MAX_CANDIDATES)
+        .enumerate()
+        .map(|(i, f)| {
+            let r = &f.resolved;
+            let long = mode == rerank::Mode::Summarize && i < rerank::SUMMARY_LONG_CANDIDATES;
+            let excerpt = if long {
+                doc_text(conn, &f.hit.document_id, rerank::SUMMARY_EXCERPT_CHARS)
+                    .or_else(|| r.chunk_text.clone())
+            } else {
+                r.chunk_text.clone()
+            };
+            rerank::Candidate {
+                title: r.card.title.clone(),
+                kind: serde_json::to_value(&r.card.file_kind)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_default(),
+                modified: r.card.modified_at.chars().take(10).collect(),
+                excerpt: excerpt.unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+fn resolve_all(
+    conn: &Connection,
+    acl: &Acl,
+    hits: Vec<Hit>,
+    terms: &[String],
+) -> Result<Vec<Found>, IpcError> {
+    let mut out = Vec::new();
+    for h in hits {
+        if let Some(r) = search::resolve(
+            conn,
+            acl,
+            &h.document_id,
+            h.chunk_id,
+            h.reason.as_str(),
+            terms,
+        )? {
+            out.push(Found {
+                hit: h,
+                resolved: r,
+            });
+        }
+    }
+    Ok(out)
+}
+
+pub fn run(
+    conn: &Connection,
+    generation: Option<&str>,
+    models: &dyn QueryModels,
+    q: &Query<'_>,
+) -> Result<Outcome, IpcError> {
+    let acl = Acl::load(conn)?;
+    let searchable = !acl.is_empty();
+
+    // 1. Understand (the LLM plans while the query is embedded once).
+    let rules_plan = understand::plan(q.text, None, q.allow_clarify);
+    let use_llm = searchable && models.has_llm();
+    let (llm_out, mut qv) = std::thread::scope(|s| {
+        let h = use_llm.then(|| s.spawn(|| llm_plan(models, q)));
+        let v = (searchable && generation.is_some())
+            .then(|| models.embed_query(&rules_plan.embed_text))
+            .flatten();
+        (h.and_then(|h| h.join().ok().flatten()), v)
+    });
+    let mut plan = match &llm_out {
+        Some(l) => understand::plan(q.text, Some(l), q.allow_clarify),
+        None => rules_plan.clone(),
+    };
+    if plan.embed_text != rules_plan.embed_text && generation.is_some() && searchable {
+        qv = models.embed_query(&plan.embed_text).or(qv);
+    }
+
+    let mut out = Outcome {
+        plan: plan.clone(),
+        kind: SearchKind::NotFound,
+        choices: Vec::new(),
+        found: Vec::new(),
+        direct: None,
+        summary: None,
+        picked_by_llm: false,
+        notice: None,
+    };
+
+    if plan.intent == PlanIntent::Clarify {
+        out.kind = SearchKind::Clarify;
+        out.choices = plan
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| Choice {
+                id: format!("opt:{i}"),
+                label: o.clone(),
+                count: 0,
+            })
+            .collect();
+        return Ok(out);
+    }
+
+    // 2. Earlier results first for "geçen bana bulmuştun…".
+    if plan.intent == PlanIntent::LookupPrior {
+        let prior = history::prior_results(conn, &plan.terms, PRIOR_SHOW)?;
+        let found = resolve_all(conn, &acl, prior.hits, &plan.terms)?;
+        if !found.is_empty() {
+            out.kind = SearchKind::Results;
+            out.found = found;
+            return Ok(out);
+        }
+        if prior.withheld {
+            out.notice = Some("prior_not_accessible".into());
+        }
+        // Nothing usable in history: search the files instead.
+        plan.intent = PlanIntent::Search;
+        out.plan.intent = PlanIntent::Search;
+    }
+    if !searchable {
+        return Ok(out);
+    }
+
+    // 3. Retrieve.
+    let filter = DocFilter::new(&plan.filters, q.now, q.utc_offset);
+    let browse = plan.is_browse();
+    let hits = if browse {
+        search::browse(conn, &filter, RESULT_LIMIT)?
+    } else {
+        search::search_terms(
+            conn,
+            generation,
+            qv.as_deref(),
+            &plan.terms,
+            &filter,
+            if llm_out.is_some() {
+                PICK_POOL
+            } else {
+                RESULT_LIMIT
+            },
+        )?
+    };
+    let mut found = resolve_all(conn, &acl, hits, &plan.terms)?;
+
+    // 4. Pick (and summarize).
+    let mode = if plan.summarize {
+        rerank::Mode::Summarize
+    } else {
+        rerank::Mode::Pick
+    };
+    let min = if plan.summarize { 1 } else { 2 };
+    if !browse && found.len() >= min {
+        let pick = if llm_out.is_some() {
+            let cands = candidates(conn, &found, mode);
+            let (system, user) = rerank::rerank_messages(q.text, &cands, mode);
+            models
+                .llm_json(
+                    &system,
+                    &user,
+                    &rerank::rerank_schema(cands.len(), mode),
+                    mode.max_tokens(),
+                )
+                .and_then(|v| rerank::parse_rerank(&v, cands.len()))
+        } else {
+            None
+        };
+        match pick {
+            Some(p) if !p.order.is_empty() => {
+                out.picked_by_llm = true;
+                if let Some((text, i)) = &p.answer {
+                    out.direct = Some(DirectAnswer {
+                        text: text.clone(),
+                        result_ref: found[*i].resolved.card.result_ref.clone(),
+                    });
+                }
+                let mut slots: Vec<Option<Found>> = found.into_iter().map(Some).collect();
+                found = p.order.iter().filter_map(|i| slots[*i].take()).collect();
+                out.summary = p.summary.map(|text| Summary {
+                    text,
+                    sources: found
+                        .iter()
+                        .map(|f| f.resolved.card.result_ref.clone())
+                        .collect(),
+                });
+            }
+            Some(_) => {
+                out.picked_by_llm = true;
+                found.truncate(UNSURE_SHOW);
+            }
+            None => {
+                let best = found.first().map(|f| f.hit.score).unwrap_or(0.0);
+                found.retain(|f| f.hit.score >= best * RELATIVE_FLOOR);
+                found.truncate(RESULT_LIMIT);
+            }
+        }
+    }
+    out.kind = if found.is_empty() {
+        SearchKind::NotFound
+    } else {
+        SearchKind::Results
+    };
+    out.found = found;
+    Ok(out)
+}

@@ -287,3 +287,11 @@
 .license-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 0; border-bottom: 1px solid var(--line-row); font-size: 14px; }
 .license-list .name { font-weight: 600; }
 .license-list .lic { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+/* LLM summary with citations */
+.summary { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-soft); }
+.summary p { margin: 4px 0 0; line-height: 1.55; }
+.summary .cites { display: inline-flex; gap: 2px; margin-left: 2px; vertical-align: super; }
+.cite { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; border: 0; background: var(--nav-active); color: var(--accent); font-size: 11px; font-weight: 700; line-height: 18px; cursor: pointer; }
+.cite:hover { background: var(--file-tile); }
+.notice { color: var(--ink-2); }

@@ -1,0 +1,4 @@
+Router setup
+Admin page: 192.168.1.1
+Change the network name (SSID) to HomeNet-5G and set WPA3.
+Disable WPS. Reboot after the firmware update.

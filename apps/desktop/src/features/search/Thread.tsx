@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import type { HistoryTurn } from "../../bindings/HistoryTurn";
 import type { IpcError } from "../../bindings/IpcError";
 import type { Understood } from "../../bindings/Understood";
+import type { Summary } from "../../bindings/Summary";
+import type { ResultCard as Card } from "../../bindings/ResultCard";
 import { Icon } from "../../ui/icons";
 import { useI18n } from "../../i18n";
 import { clockTime, relativeTime } from "../../lib/format";
@@ -59,6 +61,44 @@ export function UnderstoodLine({ u }: { u: Understood | null }) {
   );
 }
 
+/** LLM summary; each [k] opens the preview of the cited result. */
+export function SummaryBlock({ s, results, onPreview }: { s: Summary; results: Card[]; onPreview: (ref: string) => void }) {
+  const { t } = useI18n();
+  const parts = s.text.split(/(\[[\d,\s]+\])/g);
+  return (
+    <div className="summary" data-testid="summary">
+      <div className="summary-head small muted">{t("search.summaryTitle")}</div>
+      <p>
+        {parts.map((p, i) => {
+          const m = p.match(/^\[([\d,\s]+)\]$/);
+          if (!m) return <span key={i}>{p}</span>;
+          return (
+            <span key={i} className="cites">
+              {m[1].split(",").map((n) => {
+                const ref = s.sources[Number(n.trim()) - 1];
+                const card = results.find((r) => r.result_ref === ref);
+                if (!ref || !card) return null;
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    className="cite"
+                    title={card.title}
+                    aria-label={t("search.citeLabel", { n: n.trim(), file: card.title })}
+                    onClick={() => onPreview(ref)}
+                  >
+                    {n.trim()}
+                  </button>
+                );
+              })}
+            </span>
+          );
+        })}
+      </p>
+    </div>
+  );
+}
+
 function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: boolean } & Omit<Props, "turns" | "pending" | "error">) {
   const { t, lang } = useI18n();
   const n = turn.count ?? 0;
@@ -101,6 +141,7 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
             <div className="lead">
               <strong>{t("search.notFound")}</strong> <span className="muted">{t("search.notFoundWhy")}</span>
             </div>
+            {turn.notice && <div className="sub notice">{t(`search.notice.${turn.notice}`)}</div>}
             <UnderstoodLine u={turn.understood} />
             {isLast && (
               <div className="choices">
@@ -130,6 +171,8 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
               )}
             </div>
             <div className="sub">{turn.picked_by_llm ? t("search.picked", { n: turn.results.length }) : t("search.bestMatches", { n: turn.results.length })}</div>
+            {turn.notice && <div className="sub notice">{t(`search.notice.${turn.notice}`)}</div>}
+            {turn.summary && <SummaryBlock s={turn.summary} results={turn.results} onPreview={p.onPreview} />}
             {turn.answer && (
               <div className="direct-answer" data-testid="direct-answer">
                 <strong>{turn.answer.text}</strong>

@@ -3,17 +3,23 @@ import type { Choice } from "./Choice";
 import type { DirectAnswer } from "./DirectAnswer";
 import type { ResultCard } from "./ResultCard";
 import type { SearchKind } from "./SearchKind";
+import type { Summary } from "./Summary";
 import type { Understood } from "./Understood";
 
 export type SearchResponse = { session_id: string, turn_id: string, kind: SearchKind, count: number, choices: Array<Choice>, results: Array<ResultCard>, 
 /**
  * Clarifying question (kind = clarify), in the user's language.
  */
-question: string | null, understood: Understood | null, answer: DirectAnswer | null, 
+question: string | null, understood: Understood | null, answer: DirectAnswer | null, summary: Summary | null, 
 /**
  * The LLM checked the candidates and picked these.
  */
 picked_by_llm: boolean, 
+/**
+ * Extra line for the answer, e.g. "prior_not_accessible": earlier
+ * results matched but their folder is no longer allowed.
+ */
+notice: string | null, 
 /**
  * True when no LLM helped with this request (none registered, or
  * it failed); rules-only understanding was used.

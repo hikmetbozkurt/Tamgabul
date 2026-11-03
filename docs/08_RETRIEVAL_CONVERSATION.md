@@ -13,6 +13,7 @@
 - One question at most: never two clarifications in a row; a picked option completes the earlier request.
 - Context sent to the planning call: last 3 requests, up to 3 shown titles each, active filters. No file text. The pick call additionally sees short excerpts of the candidates (quoted data; output limited to candidate numbers).
 - Images get a description at scan time (`describe.rs`, ADR 022); results are picked by the LLM from 20 candidates (`rerank.rs`), with an optional one-sentence answer tied to a shown file and hidden when that file is revoked.
+- Whole request flow lives in `engine.rs` (ADR 023): prior-result lookup from history (`history::prior_results`), cited summaries (`rerank.rs`), in-memory int8 vector index (`vindex.rs`). The evaluation set and runner are in `examples/eval/` and `crates/runtime/examples/eval.rs`.
 - Answers show "Understood: …" (filters, rejected words, words the LLM added) so a wrong reading is visible.
 
 ## Intent vocabulary (initial)

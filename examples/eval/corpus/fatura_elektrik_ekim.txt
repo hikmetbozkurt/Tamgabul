@@ -1,0 +1,6 @@
+ELEKTRİK FATURASI
+Dönem: Ekim 2026
+Tüketim: 212 kWh
+Ödenecek tutar: 845,60 TL
+Son ödeme tarihi: 20 Kasım 2026
+Abone no: 4400123

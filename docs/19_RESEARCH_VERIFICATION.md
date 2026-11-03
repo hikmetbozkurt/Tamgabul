@@ -36,6 +36,10 @@ Checked from the published files and the llama.cpp source, then confirmed on Win
 - Manual test 2026-11-03 (embedding + LLM loaded): plan-only LLM did not fix wrong image results ("profil fotoğrafım" → ID card back; "when was my uk visa" → unrelated files). Cause: no description of image content in the index. → ADR 022.
 - Not yet measured: caption time per image, load time, RAM/VRAM, plan latency and plan quality on Windows. Run `cargo run -p tamgabul-runtime --release --example llm_spike -- --model C:\AI\models\gemma-4-e2b-it` and record the output under V01; add `--images <folder>` to see descriptions. No numbers are claimed before that.
 
+## Search evaluation (2026-11-03)
+- Set: `examples/eval/` — 24 invented TR/EN text files, 41 requests (keyword, paraphrase, cross-lingual, question, typo, none). CI checks the keyword requests are found in the top 3 with no model.
+- With models: `cargo run -p tamgabul-runtime --release --example eval -- --embedding C:\AI\models\embeddinggemma-2 --llm C:\AI\models\gemma-4-e2b-it`. **No results recorded yet**; record them here as V08.
+
 ## Open verification tickets
 - V01: Run `llm_spike` with Gemma 4 E2B-it Q4_0 on Windows: load, JSON plans for the built-in TR/EN cases, unload, RSS/VRAM check. (E4B Q4_K_M kept as a larger fallback.)
 - V02: Pin EG2 checkpoint/version, text+image encoding correct vectors, user-selected local checkpoint, CPU/GPU and runtime packaging with minimal stack. **DONE 2026-11-03 on Windows** with llama.cpp build 12024 (`ddf48f85c`): text, image and audio embeddings 768d and sane; unload and idle unload end the process. Details in agent_tasks/01.
@@ -43,6 +47,7 @@ Checked from the published files and the llama.cpp source, then confirmed on Win
 - V04: Chosen STT/TTS implementations, exact model versions/licenses, Windows/mac binary packaging and voice metrics. Do not assume previously named TTS licenses/performance without checking each release artifact.
 - V05: macOS window/menu-bar and shortcut behavior, permissions; packaging signing/notarization.
 - V07: OCR quality and speed on real Turkish/English screenshots and scanned PDFs on Windows; HEIC/AVIF decoding with and without the Windows codec extensions; audio search usefulness without STT.
+- V08: Run the evaluation set on Windows with and without the LLM; record hit@1/hit@3/MRR per kind and latency.
 - V06: LoRA/PEFT adaptation of `google/embeddinggemma-2` exact modules/quantization/export to runtime under 16GB VRAM; only after MVP.
 
 ## Distinguish license layers

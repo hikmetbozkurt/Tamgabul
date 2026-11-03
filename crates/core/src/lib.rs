@@ -7,6 +7,7 @@
 pub mod db;
 pub mod describe;
 pub mod dto;
+pub mod engine;
 pub mod error;
 pub mod health;
 pub mod history;
@@ -18,6 +19,7 @@ pub mod rerank;
 pub mod search;
 pub mod settings;
 pub mod understand;
+pub mod vindex;
 
 /// Version of the UI <-> Rust IPC contract (docs/13_API_CONTRACTS.md).
 /// Bump on any breaking change to a DTO in [`ipc`].

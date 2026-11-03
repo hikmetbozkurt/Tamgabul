@@ -115,3 +115,29 @@ describe("understood line", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+describe("summary with citations", () => {
+  it("renders cited numbers that open the cited result", async () => {
+    const { I18nProvider } = await import("./i18n");
+    const { SummaryBlock } = await import("./features/search/Thread");
+    const opened: string[] = [];
+    const card = (ref: string, title: string) => ({
+      result_ref: ref, title, display_path: "", project: null, file_kind: "pdf" as const, snippet: null,
+      highlights: [], modified_at: "2026-01-01T00:00:00Z", match_reason: "keyword",
+    });
+    render(
+      <I18nProvider lang="en">
+        <SummaryBlock
+          s={{ text: "Rent is 12,000 TL [1]. Signed in March [1, 2].", sources: ["r:a", "r:b"] }}
+          results={[card("r:a", "kira.pdf"), card("r:b", "imza.png")]}
+          onPreview={(r) => opened.push(r)}
+        />
+      </I18nProvider>,
+    );
+    const cites = screen.getAllByRole("button", { name: /Source/ });
+    expect(cites.map((c) => c.textContent)).toEqual(["1", "1", "2"]);
+    fireEvent.click(screen.getByRole("button", { name: "Source 2: imza.png" }));
+    expect(opened).toEqual(["r:b"]);
+    expect(screen.getByTestId("summary").textContent).toContain("Rent is 12,000 TL");
+  });
+});

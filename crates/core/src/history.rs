@@ -9,7 +9,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::dto::{
-    Choice, DirectAnswer, HistorySession, HistoryTurn, SearchKind, TurnRole, Understood,
+    Choice, DirectAnswer, HistorySession, HistoryTurn, SearchKind, Summary, TurnRole, Understood,
 };
 use crate::error::{ErrorCode, IpcError};
 use crate::index::store::new_id;
@@ -75,7 +75,9 @@ pub struct Answer<'a> {
     pub choices: &'a [Choice],
     /// Direct answer read from one result (its `result_ref`).
     pub direct: Option<&'a DirectAnswer>,
+    pub summary: Option<&'a Summary>,
     pub picked_by_llm: bool,
+    pub notice: Option<&'a str>,
 }
 
 /// Store one exchange: the user's text with the plan it was understood as,
@@ -110,7 +112,9 @@ pub fn record_search(
         "choices": answer.choices,
         "understood": plan.understood(),
         "answer": answer.direct,
+        "summary": answer.summary,
         "picked_by_llm": answer.picked_by_llm,
+        "notice": answer.notice,
     });
     tx.execute(
         "INSERT INTO turns(turn_id, session_id, ordinal, role, intent, slots_json)
@@ -173,6 +177,141 @@ pub fn record_search(
     }
     tx.commit().map_err(err)?;
     Ok(ai_turn)
+}
+
+/// Earlier results for "geçen bana bulmuştun…" (docs/08 memory-first
+/// retrieval).
+#[derive(Debug, Clone, Default)]
+pub struct PriorLookup {
+    /// Still authorized, best first.
+    pub hits: Vec<Hit>,
+    /// Matching earlier results exist but none is accessible any more
+    /// (folder revoked or file gone). Their names are not revealed.
+    pub withheld: bool,
+}
+
+const PRIOR_EVENTS: usize = 500;
+
+/// Search history for results shown before: earlier requests and shown
+/// file names are matched against `topic` (folded words); without topic
+/// words, the most recent results. Every hit is re-authorized.
+pub fn prior_results(
+    conn: &Connection,
+    topic: &[String],
+    limit: usize,
+) -> Result<PriorLookup, IpcError> {
+    use crate::index::text::fold;
+    let acl = Acl::load(conn)?;
+    let topic: Vec<String> = topic.iter().map(|t| fold(t)).collect();
+    let mut st = conn
+        .prepare(
+            "SELECT e.event_id, COALESCE(e.query_terms, ''), i.document_id, i.chunk_id,
+                    COALESCE(i.title_snapshot, ''), i.rank, i.action
+             FROM search_events e JOIN result_interactions i ON i.event_id = e.event_id
+             WHERE e.event_id IN (SELECT event_id FROM search_events
+                                  WHERE event_type = 'results_shown'
+                                  ORDER BY created_at DESC LIMIT ?1)
+             ORDER BY e.created_at DESC, i.rank",
+        )
+        .map_err(err)?;
+    // document_id is NULL for results of a revoked folder (tombstoned).
+    type Row = (
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        String,
+        Option<i64>,
+        String,
+    );
+    let rows: Vec<Row> = st
+        .query_map([PRIOR_EVENTS as i64], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+
+    // Score per document: topic words in the earlier request or the shown
+    // name; opened results and more recent events break ties.
+    let mut best: Vec<(String, Option<i64>, f64)> = Vec::new();
+    let mut withheld = false;
+    for (age, (_, query, doc, chunk, title, rank, action)) in rows.iter().enumerate() {
+        let hay = fold(&format!("{query} {title}"));
+        let matched = topic.iter().filter(|t| hay.contains(t.as_str())).count();
+        if !topic.is_empty() && matched == 0 {
+            continue;
+        }
+        let Some(doc) = doc else {
+            // A matching earlier result whose folder was revoked.
+            withheld = true;
+            continue;
+        };
+        let score = matched as f64 * 10.0
+            + if action == "opened" { 3.0 } else { 0.0 }
+            + 1.0 / (1.0 + rank.unwrap_or(0) as f64)
+            - age as f64 * 1e-4;
+        match best.iter_mut().find(|b| &b.0 == doc) {
+            Some(b) if b.2 >= score => {}
+            Some(b) => *b = (doc.clone(), *chunk, score),
+            None => best.push((doc.clone(), *chunk, score)),
+        }
+    }
+    best.sort_by(|a, b| b.2.total_cmp(&a.2));
+    if topic.is_empty() {
+        // "the last thing you showed me": the most recent event only.
+        if let Some((first_event, ..)) = rows.first() {
+            let docs: Vec<&String> = rows
+                .iter()
+                .filter(|r| &r.0 == first_event)
+                .filter_map(|r| r.2.as_ref())
+                .collect();
+            best.retain(|b| docs.contains(&&b.0));
+        }
+    }
+    let mut out = PriorLookup {
+        hits: Vec::new(),
+        withheld,
+    };
+    for (doc, chunk, score) in best {
+        let path: Option<String> = conn
+            .query_row(
+                "SELECT canonical_path FROM documents WHERE document_id = ?1",
+                [&doc],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        let ok = path.is_some_and(|p| {
+            let p = std::path::Path::new(&p);
+            acl.allows(p) && p.exists()
+        });
+        if !ok {
+            out.withheld = true;
+            continue;
+        }
+        out.hits.push(Hit {
+            document_id: doc,
+            chunk_id: chunk,
+            score,
+            reason: crate::search::Reason::Previous,
+        });
+        if out.hits.len() >= limit {
+            break;
+        }
+    }
+    if !out.hits.is_empty() {
+        out.withheld = false;
+    }
+    Ok(out)
 }
 
 /// What the next request in a session is read against.
@@ -329,7 +468,9 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                 question: None,
                 understood: None,
                 answer: None,
+                summary: None,
                 picked_by_llm: false,
+                notice: None,
             });
             continue;
         }
@@ -409,7 +550,17 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                 .ok()
                 .flatten()
                 .filter(|a| results.iter().any(|r| r.result_ref == a.result_ref)),
+            // A summary stays only while every file it cites is shown.
+            summary: serde_json::from_value::<Option<Summary>>(slots["summary"].clone())
+                .ok()
+                .flatten()
+                .filter(|s| {
+                    s.sources
+                        .iter()
+                        .all(|src| results.iter().any(|r| &r.result_ref == src))
+                }),
             picked_by_llm: slots["picked_by_llm"].as_bool().unwrap_or(false),
+            notice: slots["notice"].as_str().map(str::to_owned),
             results,
         });
     }
