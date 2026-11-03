@@ -71,6 +71,8 @@ pub struct LlmSmokeReport {
     pub cold_load: Duration,
     /// One constrained answer, prompt + generation.
     pub answer: Duration,
+    /// Image input works (`None` = no projector).
+    pub vision: Option<bool>,
 }
 
 /// LLM smoke: start a private worker, ask one question whose answer is
@@ -81,6 +83,7 @@ pub fn llm_smoke(
     cfg: LlamaServerConfig,
     cancel: &AtomicBool,
 ) -> Result<LlmSmokeReport, RuntimeError> {
+    let has_mmproj = cfg.mmproj.is_some();
     let launcher = ProcessLauncher::llama_server(cfg);
     let t = Instant::now();
     let worker = launcher.launch_process(cancel)?;
@@ -108,7 +111,34 @@ pub fn llm_smoke(
                 "model gave a wrong answer to a fixed question".into(),
             ));
         }
-        Ok(LlmSmokeReport { cold_load, answer })
+        // With a projector: one image in, schema-shaped JSON out.
+        let vision = if has_mmproj {
+            let s = json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["what"],
+                "properties": { "what": { "type": "string", "maxLength": 80 } }
+            });
+            Some(
+                c.chat_json(
+                    &[ChatMessage::user_with_png(
+                        "What is in this image?",
+                        test_png(64, 64),
+                    )],
+                    &s,
+                    48,
+                )
+                .map(|v| v["what"].is_string())
+                .unwrap_or(false),
+            )
+        } else {
+            None
+        };
+        Ok(LlmSmokeReport {
+            cold_load,
+            answer,
+            vision,
+        })
     })();
     worker.terminate()?;
     result

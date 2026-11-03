@@ -457,5 +457,9 @@
   "understood.date.last_month": "Geçen ay",
   "understood.date.recent": "Son 14 gün",
   "understood.date.any": "Her zaman",
-  "addModel.fail.smoke.llm": "Deneme başarısız: model JSON ile doğru cevap vermedi. llama.cpp'yi güncelle (winget upgrade ggml.llamacpp) ya da başka bir talimat modeli dene."
+  "addModel.fail.smoke.llm": "Deneme başarısız: model JSON ile doğru cevap vermedi. llama.cpp'yi güncelle (winget upgrade ggml.llamacpp) ya da başka bir talimat modeli dene.",
+  "match.caption": "Görsel açıklaması",
+  "search.picked.one": "Yerel LLM adayları inceledi; uyan dosya bu:",
+  "search.picked.other": "Yerel LLM adayları inceledi; uyan {n} dosya:",
+  "search.answerFrom": "— kaynak: {file}"
 }

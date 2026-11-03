@@ -32,6 +32,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "002_media_and_folded_fts",
         sql: include_str!("../../../database/002_media_and_folded_fts.sql"),
     },
+    Migration {
+        version: 3,
+        name: "003_image_captions",
+        sql: include_str!("../../../database/003_image_captions.sql"),
+    },
 ];
 
 fn db_err(e: impl std::fmt::Display) -> IpcError {
@@ -271,7 +276,7 @@ mod tests {
     fn fresh_db_migrates_to_latest_with_all_tables() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_and_migrate(&dir.path().join("t.db")).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 2);
+        assert_eq!(current_version(&conn).unwrap(), 3);
         let t = tables(&conn);
         for want in [
             "schema_migrations",
@@ -333,9 +338,9 @@ mod tests {
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 2);
+        assert_eq!(n, 3);
         // Nothing pending on the second open, so no backup is written.
-        assert!(!backup_path(&p, 2).exists());
+        assert!(!backup_path(&p, 3).exists());
     }
 
     #[test]
@@ -344,13 +349,13 @@ mod tests {
         configure(&conn).unwrap();
         migrate(&mut conn, MIGRATIONS).unwrap();
         let bad = [Migration {
-            version: 3,
-            name: "003_bad",
+            version: 99,
+            name: "099_bad",
             sql: "CREATE TABLE ok_t(x); SELEC nonsense;",
         }];
         let err = migrate(&mut conn, &bad).unwrap_err();
         assert_eq!(err.code, ErrorCode::DbMigrationFailed);
-        assert_eq!(current_version(&conn).unwrap(), 2);
+        assert_eq!(current_version(&conn).unwrap(), 3);
         assert!(
             !tables(&conn).iter().any(|t| t == "ok_t"),
             "partial migration leaked"
@@ -407,7 +412,12 @@ mod tests {
         )
         .unwrap();
         migrate(&mut conn, MIGRATIONS).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 2);
+        assert_eq!(current_version(&conn).unwrap(), 3);
+        conn.execute(
+            "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text) VALUES ('d','g',2,'caption','Pasaport sayfası')",
+            [],
+        )
+        .expect("caption chunks are allowed from v3");
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM embedding_records", [], |r| r.get(0))
             .unwrap();

@@ -86,6 +86,7 @@ export function WidgetSurface() {
       }
       return (
         <>
+          {last.answer && <div className="w-bubble direct-answer"><strong>{last.answer.text}</strong></div>}
           {last.results.slice(0, 3).map((r, i) => <CompactResult key={r.result_ref} r={r} primary={i === 0} onOpen={actions.onOpen} />)}
           {(last.count ?? 0) > 3 && (
             <button type="button" className="btn-link" style={{ alignSelf: "center" }} onClick={() => openApp("search")}>{t("widget.seeAll", { n: last.count ?? 0 })}</button>

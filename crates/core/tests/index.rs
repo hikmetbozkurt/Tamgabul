@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use rusqlite::Connection;
 use tamgabul_core::db::open_and_migrate;
+use tamgabul_core::describe::{Describer, NoDescriber};
 use tamgabul_core::dto::RevokeMode;
 use tamgabul_core::error::IpcError;
 use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome};
@@ -273,6 +274,15 @@ fn grant(e: &Env, rel: &str) -> Scope {
 }
 
 fn scan(e: &mut Env, scope: &Scope, emb: &mut FakeEmbedder) -> (Outcome, job::Progress) {
+    scan_with(e, scope, emb, &mut NoDescriber)
+}
+
+fn scan_with(
+    e: &mut Env,
+    scope: &Scope,
+    emb: &mut FakeEmbedder,
+    describer: &mut dyn Describer,
+) -> (Outcome, job::Progress) {
     let generation = e.generation.clone();
     job::run(
         &mut e.conn,
@@ -285,6 +295,7 @@ fn scan(e: &mut Env, scope: &Scope, emb: &mut FakeEmbedder) -> (Outcome, job::Pr
             platform: &FakeOs,
         },
         emb,
+        describer,
         &AtomicBool::new(false),
         &mut |_| {},
     )
@@ -464,6 +475,7 @@ fn without_os_services_scans_and_heic_are_skipped_with_reasons() {
             platform: &NoPlatform,
         },
         &mut FakeEmbedder::new(),
+        &mut NoDescriber,
         &AtomicBool::new(false),
         &mut |_| {},
     )
@@ -649,6 +661,7 @@ fn stop_watching_keeps_the_index_and_cancel_is_clean() {
             platform: &NoPlatform,
         },
         &mut FakeEmbedder::new(),
+        &mut NoDescriber,
         &AtomicBool::new(true),
         &mut |_| {},
     )
@@ -795,6 +808,10 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
         })
         .collect();
     let plan = understand::plan("budget review", None, true);
+    let direct = tamgabul_core::dto::DirectAnswer {
+        text: "Quarterly budget review.".into(),
+        result_ref: search::result_ref(&hits[0].document_id, hits[0].chunk_id),
+    };
     history::record_search(
         &mut e.conn,
         &session,
@@ -804,6 +821,8 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
             results: &shown,
             plan: &plan,
             choices: &[],
+            direct: Some(&direct),
+            picked_by_llm: true,
         },
         Some(&g),
     )
@@ -814,6 +833,8 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
     assert_eq!(turns[0].text.as_deref(), Some("budget review"));
     assert_eq!(turns[1].results[0].title, "report.pdf");
     assert!(turns[1].opened);
+    assert!(turns[1].picked_by_llm);
+    assert_eq!(turns[1].answer.as_ref(), Some(&direct));
     let list = history::list_sessions(&e.conn).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].opened_count, 1);
@@ -823,9 +844,12 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
     assert!(search::search(&e.conn, Some(&g), Some(&q), "budget", 10)
         .unwrap()
         .is_empty());
-    assert!(history::session_turns(&e.conn, &session).unwrap()[1]
-        .results
-        .is_empty());
+    let after = &history::session_turns(&e.conn, &session).unwrap()[1];
+    assert!(after.results.is_empty());
+    assert!(
+        after.answer.is_none(),
+        "answer hidden with its revoked source"
+    );
 
     history::clear_all(&e.conn).unwrap();
     assert!(history::list_sessions(&e.conn).unwrap().is_empty());
@@ -953,6 +977,8 @@ fn clarify_turns_and_context_are_kept_in_history() {
             results: &shown,
             plan: &p1,
             choices: &[],
+            direct: None,
+            picked_by_llm: false,
         },
         Some(&g),
     )
@@ -984,6 +1010,8 @@ fn clarify_turns_and_context_are_kept_in_history() {
             results: &[],
             plan: &p2,
             choices: &choices,
+            direct: None,
+            picked_by_llm: false,
         },
         Some(&g),
     )
@@ -1019,4 +1047,92 @@ fn clarify_turns_and_context_are_kept_in_history() {
         .unwrap();
     assert_eq!(intent, "clarify");
     assert!(history::context(&e.conn, None).unwrap().prior.is_empty());
+}
+
+/// Test-only stand-in for the vision LLM: one fixed description per image.
+struct FakeDescriber {
+    calls: usize,
+    fail: bool,
+}
+
+impl Describer for FakeDescriber {
+    fn available(&mut self) -> bool {
+        true
+    }
+    fn describe_image(&mut self, _png: &[u8]) -> Result<Option<String>, IpcError> {
+        self.calls += 1;
+        if self.fail {
+            return Err(IpcError::new(
+                tamgabul_core::error::ErrorCode::RuntimeLoadFailed,
+                "x",
+            ));
+        }
+        Ok(Some(
+            "UK visa page inside a passport. Keywords: passport, pasaport, vize".into(),
+        ))
+    }
+}
+
+#[test]
+fn images_get_descriptions_that_words_can_find() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    // First scan without a vision model: no captions.
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    assert_eq!(
+        count(
+            &e.conn,
+            "SELECT COUNT(*) FROM chunks WHERE modality = 'caption'"
+        ),
+        0
+    );
+    // Adding the model later: unchanged images are described on the next
+    // scan, other files are not touched.
+    let mut d = FakeDescriber {
+        calls: 0,
+        fail: false,
+    };
+    let (_, p) = scan_with(&mut e, &s, &mut FakeEmbedder::new(), &mut d);
+    let images = count(
+        &e.conn,
+        "SELECT COUNT(*) FROM documents WHERE file_type = 'image' AND parse_status = 'PARSED'",
+    );
+    assert!(images >= 2);
+    assert_eq!(d.calls as i64, images);
+    assert_eq!(p.indexed as i64, images);
+    let g = e.generation.clone();
+    let hits = search::search(&e.conn, Some(&g), None, "pasaport vize", 10).unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|h| h.reason == Reason::Caption));
+    // The card shows the description.
+    let acl = Acl::load(&e.conn).unwrap();
+    let r = search::resolve(
+        &e.conn,
+        &acl,
+        &hits[0].document_id,
+        hits[0].chunk_id,
+        "caption",
+        &[],
+    )
+    .unwrap()
+    .unwrap();
+    assert!(r.card.snippet.unwrap().starts_with("UK visa page"));
+    // Already described: a third scan does no model work.
+    let (_, p) = scan_with(&mut e, &s, &mut FakeEmbedder::new(), &mut d);
+    assert_eq!(p.indexed, 0);
+    assert_eq!(d.calls as i64, images);
+}
+
+#[test]
+fn a_failing_vision_model_does_not_stop_the_scan() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    let mut d = FakeDescriber {
+        calls: 0,
+        fail: true,
+    };
+    let (out, p) = scan_with(&mut e, &s, &mut FakeEmbedder::new(), &mut d);
+    assert_eq!(out, Outcome::Done);
+    assert_eq!(d.calls, 1, "tried once, then the scan went on without it");
+    assert!(p.indexed > 5);
 }

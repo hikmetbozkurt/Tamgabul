@@ -8,7 +8,9 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::dto::{Choice, HistorySession, HistoryTurn, SearchKind, TurnRole, Understood};
+use crate::dto::{
+    Choice, DirectAnswer, HistorySession, HistoryTurn, SearchKind, TurnRole, Understood,
+};
 use crate::error::{ErrorCode, IpcError};
 use crate::index::store::new_id;
 use crate::search::{self, Acl, Hit};
@@ -71,6 +73,9 @@ pub struct Answer<'a> {
     pub results: &'a [ShownResult<'a>],
     pub plan: &'a Plan,
     pub choices: &'a [Choice],
+    /// Direct answer read from one result (its `result_ref`).
+    pub direct: Option<&'a DirectAnswer>,
+    pub picked_by_llm: bool,
 }
 
 /// Store one exchange: the user's text with the plan it was understood as,
@@ -104,6 +109,8 @@ pub fn record_search(
         "question": plan.question,
         "choices": answer.choices,
         "understood": plan.understood(),
+        "answer": answer.direct,
+        "picked_by_llm": answer.picked_by_llm,
     });
     tx.execute(
         "INSERT INTO turns(turn_id, session_id, ordinal, role, intent, slots_json)
@@ -321,6 +328,8 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                 opened: false,
                 question: None,
                 understood: None,
+                answer: None,
+                picked_by_llm: false,
             });
             continue;
         }
@@ -390,12 +399,18 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
             kind: Some(kind),
             count: Some(results.len() as u32),
             choices,
-            results,
             opened,
             question: slots["question"].as_str().map(str::to_owned),
             understood: serde_json::from_value::<Option<Understood>>(slots["understood"].clone())
                 .ok()
                 .flatten(),
+            // Shown only while its source is still shown (not revoked).
+            answer: serde_json::from_value::<Option<DirectAnswer>>(slots["answer"].clone())
+                .ok()
+                .flatten()
+                .filter(|a| results.iter().any(|r| r.result_ref == a.result_ref)),
+            picked_by_llm: slots["picked_by_llm"].as_bool().unwrap_or(false),
+            results,
         });
     }
     Ok(out)

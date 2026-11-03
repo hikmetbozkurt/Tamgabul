@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tamgabul_core::db;
+use tamgabul_core::describe::{self, Describer};
 use tamgabul_core::dto::{IndexStats, RevokeRequest, ScopePreview, ScopeStatus, ScopeSummary};
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Progress};
@@ -20,7 +21,7 @@ use tamgabul_core::index::store::{self, GenerationSpec, Scope, ScopeState};
 use tamgabul_core::index::walk::{self, Limits};
 use tamgabul_core::model::{ModelCategory, ModelStatus};
 use tamgabul_core::registry::{self, ModelRecord};
-use tamgabul_runtime::client::Client;
+use tamgabul_runtime::client::{ChatMessage, Client};
 use tamgabul_runtime::{eg2, Lease};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -573,6 +574,78 @@ pub fn generation_spec(m: &ModelRecord) -> GenerationSpec {
     }
 }
 
+/// Image descriptions with the registered LLM when its vision projector is
+/// present (ADR 021). The worker is started on the first image and held for
+/// the scan, then follows its idle policy.
+struct LlmDescriber {
+    app: AppHandle,
+    model: Option<registry::ModelRecord>,
+    vision: Option<bool>,
+    lease: Option<Lease>,
+    client: Option<Client>,
+}
+
+impl LlmDescriber {
+    fn new(app: &AppHandle, conn: &rusqlite::Connection) -> Self {
+        let model = registry::active(conn)
+            .ok()
+            .and_then(|v| v.into_iter().find(|m| m.category == ModelCategory::Llm))
+            .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available);
+        Self {
+            app: app.clone(),
+            model,
+            vision: None,
+            lease: None,
+            client: None,
+        }
+    }
+}
+
+impl Describer for LlmDescriber {
+    fn available(&mut self) -> bool {
+        if self.vision.is_none() {
+            // Decided from the files on disk: no load needed to know.
+            self.vision = Some(self.model.as_ref().is_some_and(|m| {
+                tamgabul_runtime::llm::locate(Path::new(&m.path)).is_ok_and(|f| f.mmproj.is_some())
+            }));
+        }
+        self.vision == Some(true)
+    }
+
+    fn describe_image(&mut self, png: &[u8]) -> Result<Option<String>, IpcError> {
+        let Some(m) = &self.model else {
+            return Ok(None);
+        };
+        if self.client.is_none() {
+            let state = self.app.state::<AppState>();
+            if state.models.snapshot(&m.model_id).is_none() {
+                crate::models::attach(&state.models, m);
+            }
+            let lease = state
+                .models
+                .acquire(&m.model_id)
+                .map_err(crate::models::ipc)?;
+            self.client = Some(Client::new(
+                lease.endpoint().clone(),
+                Duration::from_secs(90),
+            ));
+            self.lease = Some(lease);
+        }
+        let c = self.client.as_ref().expect("client set above");
+        let v = c
+            .chat_json(
+                &[
+                    ChatMessage::system(describe::CAPTION_SYSTEM),
+                    ChatMessage::user_with_png(describe::CAPTION_USER, png.to_vec()),
+                ],
+                &describe::caption_schema(),
+                400,
+            )
+            .map_err(crate::models::ipc)?;
+        Ok(describe::parse_caption(&v))
+    }
+}
+
 fn set_error(app: &AppHandle, scope_id: &str, code: ErrorCode) {
     let state = app.state::<AppState>();
     let code = serde_json::to_value(code)
@@ -609,6 +682,7 @@ fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome,
         client: None,
         props: None,
     };
+    let mut describer = LlmDescriber::new(app, &conn);
     let mut last = Instant::now();
     let (outcome, _) = job::run(
         &mut conn,
@@ -624,6 +698,7 @@ fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome,
             platform: &OsMedia,
         },
         &mut embedder,
+        &mut describer,
         cancel,
         &mut |p| {
             if let Ok(mut m) = state.scopes.progress.lock() {

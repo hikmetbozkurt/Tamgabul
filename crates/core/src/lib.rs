@@ -5,6 +5,7 @@
 //! `tamgabul-runtime`.
 
 pub mod db;
+pub mod describe;
 pub mod dto;
 pub mod error;
 pub mod health;
@@ -13,6 +14,7 @@ pub mod index;
 pub mod ipc;
 pub mod model;
 pub mod registry;
+pub mod rerank;
 pub mod search;
 pub mod settings;
 pub mod understand;

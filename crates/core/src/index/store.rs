@@ -381,6 +381,21 @@ pub fn doc_by_path(
     .map_err(err)
 }
 
+/// The document already has an image description in this generation.
+pub fn has_caption(
+    conn: &Connection,
+    document_id: &str,
+    generation: &str,
+) -> Result<bool, IpcError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM chunks WHERE document_id = ?1 AND generation_id = ?2 AND modality = 'caption')",
+        params![document_id, generation],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n != 0)
+    .map_err(err)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewChunk {
     pub ordinal: u32,

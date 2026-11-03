@@ -79,13 +79,14 @@ impl LlamaServerConfig {
         }
     }
 
-    /// Small instruction model used only to turn a request into a search
-    /// plan (docs/08). Prompts are short, so a small context keeps memory low.
-    pub fn chat(exe: PathBuf, model: PathBuf) -> Self {
+    /// Small instruction model: search plans, result picks and (with a
+    /// projector) image descriptions (docs/08, ADR 021). Prompts are short,
+    /// so a small context keeps memory low.
+    pub fn chat(exe: PathBuf, model: PathBuf, mmproj: Option<PathBuf>) -> Self {
         Self {
             exe,
             model,
-            mmproj: None,
+            mmproj,
             embeddings: false,
             ctx: 4096,
             batch: None,
@@ -337,7 +338,7 @@ mod tests {
 
     #[test]
     fn chat_worker_uses_template_and_default_batches() {
-        let c = LlamaServerConfig::chat("llama-server".into(), "llm.gguf".into());
+        let c = LlamaServerConfig::chat("llama-server".into(), "llm.gguf".into(), None);
         let a = strs(&llama_server_args(&c, 9, "t"));
         assert!(a.contains(&"--jinja".to_string()));
         assert!(!a.contains(&"--embeddings".to_string()));

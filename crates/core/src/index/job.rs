@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
+use crate::describe::Describer;
 use crate::error::{ErrorCode, IpcError};
 use crate::index::extract;
 use crate::index::media::{self, Platform};
@@ -86,13 +87,32 @@ fn read_file(p: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Something to embed: a text chunk (from the file, a PDF page or OCR) or
-/// a media segment (image, audio).
+/// Where a text piece came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextSource {
+    File,
+    Ocr,
+    /// Description written by the vision LLM.
+    Caption,
+}
+
+impl TextSource {
+    fn modality(self) -> &'static str {
+        match self {
+            TextSource::File => "text",
+            TextSource::Ocr => "ocr",
+            TextSource::Caption => "caption",
+        }
+    }
+}
+
+/// Something to embed: a text chunk (from the file, a PDF page, OCR or an
+/// image description) or a media segment (image, audio).
 pub enum Piece {
     Text {
         chunk: text::Chunk,
         page: Option<u32>,
-        ocr: bool,
+        source: TextSource,
     },
     Media {
         modality: &'static str,
@@ -110,19 +130,49 @@ fn letters(s: &str) -> usize {
     s.chars().filter(|c| c.is_alphanumeric()).count()
 }
 
-fn push_text(out: &mut Vec<Piece>, body: &str, page: Option<u32>, ocr: bool) {
+fn push_text(out: &mut Vec<Piece>, body: &str, page: Option<u32>, source: TextSource) {
     for chunk in text::chunk(body) {
         if out.len() >= text::MAX_CHUNKS_PER_DOC {
             return;
         }
-        out.push(Piece::Text { chunk, page, ocr });
+        out.push(Piece::Text {
+            chunk,
+            page,
+            source,
+        });
     }
 }
 
 fn ocr_into(out: &mut Vec<Piece>, platform: &dyn Platform, png: &[u8], page: Option<u32>) {
     if let Some(Ok(t)) = platform.ocr(png) {
         if letters(&t) >= 3 {
-            push_text(out, &t, page, true);
+            push_text(out, &t, page, TextSource::Ocr);
+        }
+    }
+}
+
+/// Describer wrapper for one scan: after the first failure (model can't
+/// start, timeout) the rest of the scan goes on without descriptions
+/// instead of failing or waiting on every image.
+struct ScanDescriber<'a> {
+    inner: &'a mut dyn Describer,
+    failed: bool,
+}
+
+impl Describer for ScanDescriber<'_> {
+    fn available(&mut self) -> bool {
+        !self.failed && self.inner.available()
+    }
+    fn describe_image(&mut self, png: &[u8]) -> Result<Option<String>, IpcError> {
+        if self.failed {
+            return Ok(None);
+        }
+        match self.inner.describe_image(png) {
+            Ok(t) => Ok(t),
+            Err(_) => {
+                self.failed = true;
+                Ok(None)
+            }
         }
     }
 }
@@ -134,13 +184,14 @@ pub fn extract_pieces(
     ext: Option<&str>,
     platform: &dyn Platform,
     embedder: &mut dyn Embedder,
+    describer: &mut dyn Describer,
     cancel: &AtomicBool,
 ) -> Result<Vec<Piece>, &'static str> {
     let mut out = Vec::new();
     match kind {
         SourceKind::Markdown | SourceKind::Text => {
             let body = text::decode(&bytes).ok_or("binary")?;
-            push_text(&mut out, &body, None, false);
+            push_text(&mut out, &body, None, TextSource::File);
         }
         SourceKind::Markup => {
             let body = text::decode(&bytes).ok_or("binary")?;
@@ -148,12 +199,12 @@ pub fn extract_pieces(
                 &mut out,
                 &media::strip_markup(&body, media::HTML_BLOCKS),
                 None,
-                false,
+                TextSource::File,
             );
         }
         SourceKind::Rtf => {
             let body = text::decode(&bytes).ok_or("binary")?;
-            push_text(&mut out, &media::rtf_text(&body), None, false);
+            push_text(&mut out, &media::rtf_text(&body), None, TextSource::File);
         }
         SourceKind::Office(f) => {
             let k = match f {
@@ -163,7 +214,7 @@ pub fn extract_pieces(
                 OfficeFormat::OpenDocument => media::OfficeKind::OpenDocument,
             };
             let body = media::office_text(&bytes, k).map_err(|e| e.code())?;
-            push_text(&mut out, &body, None, false);
+            push_text(&mut out, &body, None, TextSource::File);
         }
         SourceKind::Pdf => {
             let pages = match extract::pdf_pages(bytes.clone(), extract::PDF_TIMEOUT) {
@@ -172,7 +223,7 @@ pub fn extract_pieces(
                 Err(e) => return Err(e.code()),
             };
             for (i, page) in pages.iter().enumerate() {
-                push_text(&mut out, page, Some(i as u32 + 1), false);
+                push_text(&mut out, page, Some(i as u32 + 1), TextSource::File);
             }
             // Scanned pages (little or no text layer) go through OCR.
             if platform.ocr_available() {
@@ -210,6 +261,12 @@ pub fn extract_pieces(
         }
         SourceKind::Image => {
             let img = media::normalize_image(&bytes, ext, platform).map_err(|e| e.code())?;
+            // Description first: it is what result cards show for an image.
+            if describer.available() && !cancel.load(Ordering::Relaxed) {
+                if let Ok(Some(caption)) = describer.describe_image(&img.model_png) {
+                    push_text(&mut out, &caption, None, TextSource::Caption);
+                }
+            }
             ocr_into(&mut out, platform, &img.ocr_png, None);
             if embedder.supports_vision() {
                 out.push(Piece::Media {
@@ -252,11 +309,15 @@ pub fn embed_pieces(
     cancel: &AtomicBool,
 ) -> Result<Option<Vec<NewChunk>>, IpcError> {
     let mut out: Vec<NewChunk> = Vec::with_capacity(pieces.len());
-    let mut texts: Vec<(text::Chunk, Option<u32>, bool)> = Vec::new();
+    let mut texts: Vec<(text::Chunk, Option<u32>, TextSource)> = Vec::new();
     let mut media_pieces = Vec::new();
     for p in pieces {
         match p {
-            Piece::Text { chunk, page, ocr } => texts.push((chunk, page, ocr)),
+            Piece::Text {
+                chunk,
+                page,
+                source,
+            } => texts.push((chunk, page, source)),
             m => media_pieces.push(m),
         }
     }
@@ -272,14 +333,15 @@ pub fn embed_pieces(
                 "embedding count mismatch",
             ));
         }
-        for ((c, page, ocr), v) in group.iter().zip(vecs) {
+        for ((c, page, source), v) in group.iter().zip(vecs) {
+            let lines = *source == TextSource::File;
             out.push(NewChunk {
                 ordinal: out.len() as u32,
-                modality: if *ocr { "ocr" } else { "text" },
+                modality: source.modality(),
                 text: Some(c.text.clone()),
                 page: *page,
-                line_start: (!*ocr).then_some(c.line_start),
-                line_end: (!*ocr).then_some(c.line_end),
+                line_start: lines.then_some(c.line_start),
+                line_end: lines.then_some(c.line_end),
                 time_ms: None,
                 vector: v,
             });
@@ -321,9 +383,14 @@ pub fn run(
     conn: &mut Connection,
     input: JobInput<'_>,
     embedder: &mut dyn Embedder,
+    describer: &mut dyn Describer,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<(Outcome, Progress), IpcError> {
+    let mut describer = ScanDescriber {
+        inner: describer,
+        failed: false,
+    };
     let scope = store::get_scope(conn, input.scope_id)?
         .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
     if scope.state != store::ScopeState::Active {
@@ -369,10 +436,20 @@ pub fn run(
         let prior = store::doc_by_path(conn, &c.path, input.generation)?;
 
         let committed = (|| -> Result<bool, IpcError> {
+            // Images indexed before a vision LLM was added get their
+            // description on the next scan.
+            let can_describe = describer.available();
+            let wants_caption = |d: &store::DocState| -> Result<bool, IpcError> {
+                Ok(c.kind == SourceKind::Image
+                    && d.indexed_in_generation
+                    && can_describe
+                    && !store::has_caption(conn, &d.document_id, input.generation)?)
+            };
             if let Some(d) = &prior {
                 if d.size == c.size
                     && d.mtime == mtime
                     && (d.indexed_in_generation || d.permanently_skipped())
+                    && !wants_caption(d)?
                 {
                     p.unchanged += 1;
                     return store::keep_document(conn, input.scope_id, &d.document_id, &mtime);
@@ -393,7 +470,10 @@ pub fn run(
             };
             let hash = blake3::hash(&bytes).to_hex().to_string();
             if let Some(d) = &prior {
-                if d.content_hash.as_deref() == Some(hash.as_str()) && d.indexed_in_generation {
+                if d.content_hash.as_deref() == Some(hash.as_str())
+                    && d.indexed_in_generation
+                    && !wants_caption(d)?
+                {
                     p.unchanged += 1;
                     return store::keep_document(conn, input.scope_id, &d.document_id, &mtime);
                 }
@@ -413,6 +493,7 @@ pub fn run(
                 ext.as_deref(),
                 input.platform,
                 embedder,
+                &mut describer,
                 cancel,
             ) {
                 Ok(p) => p,

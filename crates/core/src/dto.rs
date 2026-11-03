@@ -41,6 +41,13 @@ ts_export! {
         pub utc_offset_min: Option<i32>,
     }
 
+    /// A one-sentence answer the LLM read from one shown result's excerpt
+    /// ("UK vizen 12 Mart 2024'te verilmiş"), with that result as source.
+    pub struct DirectAnswer {
+        pub text: String,
+        pub result_ref: String,
+    }
+
     /// What the request was understood as, shown under the answer so the
     /// user can see (and correct) filters and added words.
     pub struct Understood {
@@ -84,6 +91,9 @@ ts_export! {
         /// Clarifying question (kind = clarify), in the user's language.
         pub question: Option<String>,
         pub understood: Option<Understood>,
+        pub answer: Option<DirectAnswer>,
+        /// The LLM checked the candidates and picked these.
+        pub picked_by_llm: bool,
         /// True when no LLM helped with this request (none registered, or
         /// it failed); rules-only understanding was used.
         pub degraded_llm: bool,
@@ -230,6 +240,8 @@ ts_export! {
         pub opened: bool,
         pub question: Option<String>,
         pub understood: Option<Understood>,
+        pub answer: Option<DirectAnswer>,
+        pub picked_by_llm: bool,
     }
 }
 

@@ -38,6 +38,8 @@ pub enum Reason {
     Ocr,
     /// Listed by file type / date only.
     Filter,
+    /// Words found in the image description written at scan time.
+    Caption,
 }
 
 impl Reason {
@@ -50,6 +52,7 @@ impl Reason {
             Reason::Audio => "audio",
             Reason::Ocr => "ocr",
             Reason::Filter => "filter",
+            Reason::Caption => "caption",
         }
     }
 }
@@ -265,10 +268,10 @@ fn keyword_candidates(
     let v = st
         .query_map(params![q, generation, CANDIDATES as i64], |r| {
             let m: String = r.get(2)?;
-            let reason = if m == "ocr" {
-                Reason::Ocr
-            } else {
-                Reason::Keyword
+            let reason = match m.as_str() {
+                "ocr" => Reason::Ocr,
+                "caption" => Reason::Caption,
+                _ => Reason::Keyword,
             };
             Ok((r.get(0)?, r.get(1)?, reason))
         })
@@ -429,7 +432,10 @@ pub fn search_terms(
             .or_insert((0.0, reason));
         e.0 += weight / (RRF_K + rank as f64 + 1.0);
         // Exact words explain a hit better than "meaning".
-        if matches!(reason, Reason::Keyword | Reason::Filename | Reason::Ocr) {
+        if matches!(
+            reason,
+            Reason::Keyword | Reason::Filename | Reason::Ocr | Reason::Caption
+        ) {
             e.1 = reason;
         }
     };

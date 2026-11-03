@@ -148,6 +148,8 @@ impl Client {
 pub struct ChatMessage {
     pub role: &'static str,
     pub content: String,
+    /// PNG/JPEG bytes sent with the text (needs a worker with a projector).
+    pub image: Option<Vec<u8>>,
 }
 
 impl ChatMessage {
@@ -155,12 +157,34 @@ impl ChatMessage {
         Self {
             role: "system",
             content: content.into(),
+            image: None,
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: "user",
             content: content.into(),
+            image: None,
+        }
+    }
+    pub fn user_with_png(content: impl Into<String>, png: Vec<u8>) -> Self {
+        Self {
+            role: "user",
+            content: content.into(),
+            image: Some(png),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        match &self.image {
+            None => json!({ "role": self.role, "content": self.content }),
+            Some(img) => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(img);
+                json!({ "role": self.role, "content": [
+                    { "type": "image_url", "image_url": { "url": format!("data:image/png;base64,{b64}") } },
+                    { "type": "text", "text": self.content }
+                ] })
+            }
         }
     }
 }
@@ -176,10 +200,7 @@ impl Client {
         schema: &Value,
         max_tokens: u32,
     ) -> Result<Value, RuntimeError> {
-        let msgs: Vec<Value> = messages
-            .iter()
-            .map(|m| json!({ "role": m.role, "content": m.content }))
-            .collect();
+        let msgs: Vec<Value> = messages.iter().map(ChatMessage::to_json).collect();
         let v: Value = self
             .agent
             .post(&self.url("/v1/chat/completions"))
@@ -403,6 +424,17 @@ mod tests {
         assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
         assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
         assert_eq!(body["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn image_messages_use_a_data_url_part() {
+        let m = ChatMessage::user_with_png("describe", vec![1, 2, 3]).to_json();
+        assert_eq!(
+            m["content"][0]["image_url"]["url"],
+            "data:image/png;base64,AQID"
+        );
+        assert_eq!(m["content"][1]["text"], "describe");
+        assert_eq!(ChatMessage::user("hi").to_json()["content"], "hi");
     }
 
     #[test]

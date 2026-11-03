@@ -1,9 +1,11 @@
 //! Small instruction LLM profile (docs/04 "LLM", docs/08).
 //!
-//! The LLM has one job: turn a request (plus the last few turns) into a
-//! search plan as strict JSON. It never sees file contents and never
-//! decides what may be opened. Any GGUF instruction model with a chat
-//! template is accepted; the tested one is Gemma 4 E2B-it from ggml-org.
+//! The LLM serves search only: it turns a request into a search plan,
+//! picks the matching files among retrieved candidates and (with its
+//! vision projector) describes images once at scan time. Output is always
+//! grammar-constrained JSON; it never decides what may be opened. Any GGUF
+//! instruction model with a chat template is accepted; the tested one is
+//! Gemma 4 E2B-it from ggml-org.
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +28,14 @@ pub const PINNED_SHA256: &[(&str, &str)] = &[
     (
         "gemma-4-E2B-it-BF16.gguf",
         "246c5fb19e64b941b531e86639f070bc67b00f20e9ec8556a6c02653321bc65d",
+    ),
+    (
+        "mmproj-gemma-4-E2B-it-Q8_0.gguf",
+        "9406f99c16d68cda4f1f0552192dcc99021ea1fc6d2fd50b1dc3ccf30d04b292",
+    ),
+    (
+        "mmproj-gemma-4-E2B-it-BF16.gguf",
+        "711e1e8f43fa0664adbac493129be1e6c25b81af4b4cdea97c7d798b25c0a3a4",
     ),
 ];
 
@@ -83,17 +93,15 @@ fn kind_error(h: &GgufHeader) -> Option<String> {
     None
 }
 
-/// The instruction model inside a file path or folder, chosen by GGUF
-/// headers (never by file name). Projectors and draft/MTP heads are skipped
-/// because they carry no chat template.
-pub fn locate(path: &Path) -> Result<PathBuf, RuntimeError> {
-    if !path.exists() {
-        return Err(RuntimeError::ModelMissing);
-    }
-    if path.is_file() {
-        return Ok(path.to_path_buf());
-    }
-    let rd = std::fs::read_dir(path).map_err(|e| RuntimeError::Io(format!("read folder: {e}")))?;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmFiles {
+    pub model: PathBuf,
+    /// Vision projector of the same model (image descriptions). Optional.
+    pub mmproj: Option<PathBuf>,
+}
+
+fn gguf_files(dir: &Path) -> Result<Vec<(u64, PathBuf)>, RuntimeError> {
+    let rd = std::fs::read_dir(dir).map_err(|e| RuntimeError::Io(format!("read folder: {e}")))?;
     let mut files: Vec<(u64, PathBuf)> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
@@ -105,14 +113,59 @@ pub fn locate(path: &Path) -> Result<PathBuf, RuntimeError> {
         .collect();
     // Largest first: with several quantizations, take the main weights.
     files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    Ok(files)
+}
+
+/// A projector with a vision encoder made for the model called `name`.
+fn is_projector_for(h: &GgufHeader, name: Option<&str>) -> bool {
+    h.str("general.type") == Some("mmproj")
+        && h.bool("clip.has_vision_encoder") == Some(true)
+        && name.is_some_and(|n| h.str("general.name") == Some(n))
+}
+
+/// The instruction model inside a file path or folder, chosen by GGUF
+/// headers (never by file name), plus its vision projector when one sits
+/// next to it with the same `general.name`. Draft/MTP heads are skipped
+/// because they carry no chat template.
+pub fn locate(path: &Path) -> Result<LlmFiles, RuntimeError> {
+    if !path.exists() {
+        return Err(RuntimeError::ModelMissing);
+    }
+    let files = if path.is_file() {
+        // The chosen file first, then its neighbours (for the projector).
+        let mut files = vec![(0, path.to_path_buf())];
+        if let Some(d) = path.parent() {
+            files.extend(gguf_files(d)?.into_iter().filter(|(_, p)| p != path));
+        }
+        files
+    } else {
+        gguf_files(path)?
+    };
+    let mut model: Option<(PathBuf, Option<String>)> = None;
+    let mut projectors: Vec<(PathBuf, GgufHeader)> = Vec::new();
     for (_, p) in files {
-        if read_header(&p).is_ok_and(|h| kind_error(&h).is_none()) {
-            return Ok(p);
+        let Ok(h) = read_header(&p) else { continue };
+        if h.str("general.type") == Some("mmproj") {
+            projectors.push((p, h));
+        } else if model.is_none() && kind_error(&h).is_none() {
+            model = Some((p, h.str("general.name").map(str::to_owned)));
+        } else if model.is_none() && path.is_file() {
+            // An explicitly chosen file that is not a chat model.
+            return Err(RuntimeError::Incompatible(
+                kind_error(&h).unwrap_or_else(|| "not a chat model".into()),
+            ));
         }
     }
-    Err(RuntimeError::Incompatible(
-        "no GGUF instruction model (with chat template) found".into(),
-    ))
+    let Some((model, name)) = model else {
+        return Err(RuntimeError::Incompatible(
+            "no GGUF instruction model (with chat template) found".into(),
+        ));
+    };
+    let mmproj = projectors
+        .into_iter()
+        .find(|(_, h)| is_projector_for(h, name.as_deref()))
+        .map(|(p, _)| p);
+    Ok(LlmFiles { model, mmproj })
 }
 
 /// Header checks that do not need the runtime.
@@ -194,8 +247,26 @@ mod tests {
             ],
         );
         assert!(probe(&proj).is_err());
-        // Folder: the projector is bigger but skipped.
-        assert_eq!(locate(d.path()).unwrap(), chat);
+        // Folder: the projector is bigger but is not the model; it belongs
+        // to another model name, so it is not attached either.
+        let f = locate(d.path()).unwrap();
+        assert_eq!(f.model, chat);
+        assert_eq!(f.mmproj, None);
+        let own = write(
+            d.path(),
+            "mmproj-own.gguf",
+            &[
+                ("general.architecture", V::Str("clip")),
+                ("general.type", V::Str("mmproj")),
+                ("general.name", V::Str("gemma-4-E2B-it")),
+                ("clip.has_vision_encoder", V::Bool(true)),
+            ],
+        );
+        let f = locate(d.path()).unwrap();
+        assert_eq!(f.mmproj, Some(own.clone()));
+        // Picking the model file directly finds the projector too.
+        assert_eq!(locate(&chat).unwrap().mmproj, Some(own));
+        assert!(matches!(locate(&base), Err(RuntimeError::Incompatible(_))));
     }
 
     #[test]

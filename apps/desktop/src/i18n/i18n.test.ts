@@ -54,7 +54,7 @@ describe("dictionaries", () => {
       ...["up_to_date", "scanning", "paused", "unreachable", "revoking"].map((s) => `folders.status.${s}`),
       ...["ready", "degraded", "blocked"].map((s) => `health.level.${s}`),
       ...["green", "amber", "red", "neutral"].map((s) => `legend.${s}`),
-      ...["previous_result", "semantic", "keyword", "filename", "image", "audio", "ocr", "filter"].map((s) => `match.${s}`),
+      ...["previous_result", "semantic", "keyword", "filename", "image", "audio", "ocr", "filter", "caption"].map((s) => `match.${s}`),
       ...["any", "pdf", "document", "text", "image", "audio"].map((s) => `understood.type.${s}`),
       ...["any", "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "recent"].map((s) => `understood.date.${s}`),
       "addModel.fail.smoke.llm",

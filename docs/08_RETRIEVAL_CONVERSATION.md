@@ -11,7 +11,8 @@
 - LLM output fields: `search_text`, `keywords` (≤8), `exclude` (≤4), `file_type`, `date`, `intent` (search/refine/clarify), `clarify_question`, `clarify_options` (≤4). This replaces the wider v1 intent schema for search planning; `open_result`/`model_control` stay deterministic UI actions.
 - Filters run after fusion with the ACL check (`search::DocFilter`); requests with only filters ("dünkü ekran görüntüleri") list newest first (`search::browse`).
 - One question at most: never two clarifications in a row; a picked option completes the earlier request.
-- Context sent to the LLM: last 3 requests, up to 3 shown titles each, active filters. No file text.
+- Context sent to the planning call: last 3 requests, up to 3 shown titles each, active filters. No file text. The pick call additionally sees short excerpts of the candidates (quoted data; output limited to candidate numbers).
+- Images get a description at scan time (`describe.rs`, ADR 022); results are picked by the LLM from 20 candidates (`rerank.rs`), with an optional one-sentence answer tied to a shown file and hidden when that file is revoked.
 - Answers show "Understood: …" (filters, rejected words, words the LLM added) so a wrong reading is visible.
 
 ## Intent vocabulary (initial)

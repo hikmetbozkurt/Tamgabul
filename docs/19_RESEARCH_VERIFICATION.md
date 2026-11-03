@@ -32,7 +32,9 @@ Checked from the published files and the llama.cpp source, then confirmed on Win
 
 ## Search-plan LLM (2026-11-03)
 - Model: `gemma-4-E2B-it-Q4_0.gguf` from `ggml-org/gemma-4-E2B-it-GGUF`, 2,841,481,184 bytes, SHA-256 `8e30dff3…6a52` (Hub LFS, verified on the user's copy). GGUF header: `gemma4`, size label 4.6B, context 131072, Apache-2.0, chat template with `enable_thinking` (default off).
-- Not yet measured: load time, RAM/VRAM, plan latency and plan quality on Windows. Run `cargo run -p tamgabul-runtime --release --example llm_spike -- --model C:\AI\models\gemma-4-e2b-it` and record the output under V01. No numbers are claimed before that.
+- Vision projector: `mmproj-gemma-4-E2B-it-Q8_0.gguf` (557,368,064 bytes, SHA-256 `9406f99c…b292`, vision + audio encoders, Apache-2.0), verified on the user's copy.
+- Manual test 2026-11-03 (embedding + LLM loaded): plan-only LLM did not fix wrong image results ("profil fotoğrafım" → ID card back; "when was my uk visa" → unrelated files). Cause: no description of image content in the index. → ADR 022.
+- Not yet measured: caption time per image, load time, RAM/VRAM, plan latency and plan quality on Windows. Run `cargo run -p tamgabul-runtime --release --example llm_spike -- --model C:\AI\models\gemma-4-e2b-it` and record the output under V01; add `--images <folder>` to see descriptions. No numbers are claimed before that.
 
 ## Open verification tickets
 - V01: Run `llm_spike` with Gemma 4 E2B-it Q4_0 on Windows: load, JSON plans for the built-in TR/EN cases, unload, RSS/VRAM check. (E4B Q4_K_M kept as a larger fallback.)

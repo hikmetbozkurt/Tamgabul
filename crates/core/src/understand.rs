@@ -335,7 +335,7 @@ const SYSTEM_PROMPT: &str = r#"You turn a request to find the user's own local f
 
 Fields:
 - search_text: the request as a short, self-contained search phrase in the user's language. If it refers to earlier turns ("şu timer olan", "that one"), include the topic from them. Keep names, code identifiers and file names exactly as written. Never add facts.
-- keywords: up to 8 single words likely to appear inside the file or its name: the important words of the request in base form without Turkish suffixes ("faturayı" -> "fatura"), plus close synonyms and the English/Turkish translation ("fatura" -> "invoice"). No filler words, no dates, no file-type words.
+- keywords: up to 8 single words likely to appear inside the file or its name: the important words of the request in base form without Turkish suffixes ("faturayı" -> "fatura"), plus close synonyms, the English/Turkish translation ("fatura" -> "invoice") and spelled-out abbreviations ("UK" -> "United Kingdom", "İngiltere"). No filler words, no dates, no file-type words.
 - exclude: words the user explicitly rejected ("X değil", "not X"), else [].
 - file_type: pdf, document (Word/Excel/PowerPoint), text, image (photo, screenshot), audio (recording) — only when the user asks for that kind of file, or keeps it from the active filters while refining; else any.
 - date: only when the user gives a time (today, yesterday, this_week, last_week, this_month, last_month, recent); else any.

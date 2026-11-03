@@ -457,5 +457,9 @@
   "understood.date.last_month": "Last month",
   "understood.date.recent": "Last 14 days",
   "understood.date.any": "Any time",
-  "addModel.fail.smoke.llm": "Test run failed: the model did not answer correctly in JSON. Update llama.cpp (winget upgrade ggml.llamacpp) or try another instruction model."
+  "addModel.fail.smoke.llm": "Test run failed: the model did not answer correctly in JSON. Update llama.cpp (winget upgrade ggml.llamacpp) or try another instruction model.",
+  "match.caption": "Image description",
+  "search.picked.one": "The local LLM checked the candidates; this one fits:",
+  "search.picked.other": "The local LLM checked the candidates; these {n} fit:",
+  "search.answerFrom": "— from {file}"
 }

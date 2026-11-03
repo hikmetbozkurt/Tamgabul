@@ -11,13 +11,15 @@ use std::time::Duration;
 
 use tamgabul_core::db;
 use tamgabul_core::dto::{
-    Choice, HistorySession, HistoryTurn, ResultPreview, SearchKind, SearchRequest, SearchResponse,
+    Choice, DirectAnswer, HistorySession, HistoryTurn, ResultPreview, SearchKind, SearchRequest,
+    SearchResponse,
 };
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::history::{self, Answer, ShownResult};
 use tamgabul_core::index::store;
 use tamgabul_core::model::{ModelCategory, ModelStatus};
 use tamgabul_core::registry::{self, ModelRecord};
+use tamgabul_core::rerank;
 use tamgabul_core::search::{self, Acl, DocFilter};
 use tamgabul_core::understand::{self, PlanIntent};
 use tamgabul_runtime::client::{ChatMessage, Client};
@@ -27,6 +29,13 @@ use tauri::{AppHandle, Manager, State};
 use crate::AppState;
 
 const RESULT_LIMIT: usize = 10;
+/// Candidates the LLM looks at before picking (rerank::MAX_CANDIDATES).
+const PICK_POOL: usize = 20;
+/// Without an LLM: hide hits weaker than this share of the best score
+/// (scores are rank statistics; this is relative, not a calibrated cutoff).
+const RELATIVE_FLOOR: f64 = 0.5;
+/// When the LLM looked and found no clear match, show only this many.
+const UNSURE_SHOW: usize = 3;
 
 fn no_db() -> IpcError {
     IpcError::new(ErrorCode::DbMigrationFailed, "database unavailable")
@@ -102,6 +111,39 @@ fn llm_plan(
         )
         .ok()?;
     understand::parse_llm(&v).ok()
+}
+
+/// The LLM's pick among resolved candidates; `None` on any failure.
+fn llm_pick(
+    state: &AppState,
+    model: &ModelRecord,
+    request: &str,
+    resolved: &[(&search::Hit, search::Resolved)],
+) -> Option<rerank::Pick> {
+    let cands: Vec<rerank::Candidate> = resolved
+        .iter()
+        .take(rerank::MAX_CANDIDATES)
+        .map(|(_, r)| rerank::Candidate {
+            title: r.card.title.clone(),
+            kind: serde_json::to_value(&r.card.file_kind)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            modified: r.card.modified_at.chars().take(10).collect(),
+            excerpt: r.chunk_text.clone().unwrap_or_default(),
+        })
+        .collect();
+    let lease = state.models.acquire(&model.model_id).ok()?;
+    let c = Client::new(lease.endpoint().clone(), LLM_TIMEOUT);
+    let (system, user) = rerank::rerank_messages(request, &cands);
+    let v = c
+        .chat_json(
+            &[ChatMessage::system(system), ChatMessage::user(user)],
+            &rerank::rerank_schema(cands.len()),
+            200,
+        )
+        .ok()?;
+    rerank::parse_rerank(&v, cands.len())
 }
 
 fn now_unix() -> i64 {
@@ -189,12 +231,16 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             qv.as_deref(),
             &plan.terms,
             &filter,
-            RESULT_LIMIT,
+            if llm_out.is_some() {
+                PICK_POOL
+            } else {
+                RESULT_LIMIT
+            },
         )?
     };
+    let browse = plan.is_browse();
 
-    let mut cards = Vec::new();
-    let mut shown = Vec::new();
+    let mut resolved = Vec::new();
     for h in &hits {
         if let Some(r) = search::resolve(
             &conn,
@@ -204,13 +250,52 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             h.reason.as_str(),
             &plan.terms,
         )? {
-            shown.push(ShownResult {
-                hit: h,
-                scope_id: acl.scope_of(&r.path).map(|s| s.scope_id.clone()),
-                title: r.card.title.clone(),
-            });
-            cards.push(r.card);
+            resolved.push((h, r));
         }
+    }
+
+    // Final pick: the LLM reads the candidates and keeps the ones that
+    // answer the request. Without it, weak tail hits are cut.
+    let mut direct = None;
+    let mut picked_by_llm = false;
+    if !browse && resolved.len() > 1 {
+        let pick = match (&llm, &llm_out) {
+            (Some(m), Some(_)) => llm_pick(&state, m, &query, &resolved),
+            _ => None,
+        };
+        match pick {
+            Some(p) if !p.order.is_empty() => {
+                picked_by_llm = true;
+                if let Some((text, i)) = &p.answer {
+                    direct = Some(DirectAnswer {
+                        text: text.clone(),
+                        result_ref: resolved[*i].1.card.result_ref.clone(),
+                    });
+                }
+                let mut slots: Vec<Option<_>> = resolved.into_iter().map(Some).collect();
+                resolved = p.order.iter().filter_map(|i| slots[*i].take()).collect();
+            }
+            Some(_) => {
+                picked_by_llm = true;
+                resolved.truncate(UNSURE_SHOW);
+            }
+            None => {
+                let best = resolved.first().map(|(h, _)| h.score).unwrap_or(0.0);
+                resolved.retain(|(h, _)| h.score >= best * RELATIVE_FLOOR);
+                resolved.truncate(RESULT_LIMIT);
+            }
+        }
+    }
+
+    let mut cards = Vec::new();
+    let mut shown = Vec::new();
+    for (h, r) in resolved {
+        shown.push(ShownResult {
+            hit: h,
+            scope_id: acl.scope_of(&r.path).map(|s| s.scope_id.clone()),
+            title: r.card.title.clone(),
+        });
+        cards.push(r.card);
     }
     let (kind, choices) = if plan.intent == PlanIntent::Clarify {
         let choices: Vec<Choice> = plan
@@ -239,6 +324,8 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             results: &shown,
             plan: &plan,
             choices: &choices,
+            direct: direct.as_ref(),
+            picked_by_llm,
         },
         generation.as_deref(),
     )?;
@@ -251,6 +338,8 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
         results: cards,
         question: plan.question.clone(),
         understood: plan.understood(),
+        answer: direct,
+        picked_by_llm,
         degraded_llm: !plan.by_llm,
         searched_scope_count: scope_count,
     })

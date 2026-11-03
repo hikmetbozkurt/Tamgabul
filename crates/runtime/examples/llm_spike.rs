@@ -13,6 +13,8 @@
 //!   --server <llama-server.exe>   default: PATH / winget
 //!   --cpu                         force CPU (-ngl 0)
 //!   --no-hash                     skip SHA-256 of the weights
+//!   --images <folder>             describe up to 10 images from this folder
+//!                                 (needs the mmproj next to the model)
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,6 +27,7 @@ use tamgabul_runtime::worker::{GpuLayers, LlamaServerConfig, ProcessLauncher, Wo
 use tamgabul_runtime::{eg2, llm, locate};
 
 struct Args {
+    images: Option<PathBuf>,
     model: PathBuf,
     server: Option<PathBuf>,
     cpu: bool,
@@ -37,6 +40,7 @@ fn args() -> Args {
         server: None,
         cpu: false,
         hash: true,
+        images: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -51,6 +55,7 @@ fn args() -> Args {
             "--server" => a.server = Some(v()),
             "--cpu" => a.cpu = true,
             "--no-hash" => a.hash = false,
+            "--images" => a.images = Some(v()),
             other => die(&format!("unknown option {other}")),
         }
     }
@@ -180,7 +185,16 @@ fn main() {
     }
 
     println!("\n[2] model file");
-    let model = llm::locate(&a.model).unwrap_or_else(|e| die(&format!("model: {e}")));
+    let files = llm::locate(&a.model).unwrap_or_else(|e| die(&format!("model: {e}")));
+    let model = files.model.clone();
+    line(
+        "vision projector",
+        files
+            .mmproj
+            .as_deref()
+            .map(name)
+            .unwrap_or_else(|| "none (no image descriptions)".into()),
+    );
     line("model", name(&model));
     let probe = llm::probe(&model).unwrap_or_else(|e| die(&format!("static check failed: {e}")));
     line("architecture", &probe.architecture);
@@ -215,7 +229,7 @@ fn main() {
     }
 
     println!("\n[3] start worker");
-    let mut cfg = LlamaServerConfig::chat(found.path.clone(), model.clone());
+    let mut cfg = LlamaServerConfig::chat(found.path.clone(), model.clone(), files.mmproj.clone());
     if a.cpu {
         cfg.gpu_layers = GpuLayers::None;
     }
@@ -286,6 +300,45 @@ fn main() {
     line("valid plans", format!("{ok}/{}", all.len()));
     line("median latency", ms(sorted[sorted.len() / 2]));
     line("max latency", ms(*sorted.last().unwrap()));
+
+    if let (Some(dir), Some(_)) = (&a.images, &files.mmproj) {
+        println!("\n[4b] image descriptions");
+        let mut imgs: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default();
+        imgs.retain(|p| {
+            p.extension()
+                .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                .is_some_and(|e| ["png", "jpg", "jpeg", "webp"].contains(&e.as_str()))
+        });
+        imgs.sort();
+        let schema = tamgabul_core::describe::caption_schema();
+        for p in imgs.iter().take(10) {
+            let Ok(bytes) = std::fs::read(p) else {
+                continue;
+            };
+            // The app sends PNG ≤1536 px; here the original goes as-is.
+            let t = Instant::now();
+            let r = c.chat_json(
+                &[
+                    ChatMessage::system(tamgabul_core::describe::CAPTION_SYSTEM),
+                    ChatMessage::user_with_png(tamgabul_core::describe::CAPTION_USER, bytes),
+                ],
+                &schema,
+                400,
+            );
+            match r {
+                Ok(v) => println!(
+                    "\n  {} · {}\n    {}",
+                    name(p),
+                    ms(t.elapsed()),
+                    tamgabul_core::describe::parse_caption(&v)
+                        .unwrap_or_else(|| "(nothing usable)".into())
+                ),
+                Err(e) => println!("\n  {} · FAILED: {e}", name(p)),
+            }
+        }
+    }
 
     println!("\n[5] stop worker");
     let t = Instant::now();

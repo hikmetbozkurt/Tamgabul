@@ -129,7 +129,13 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
                 <>{t("search.foundA")} <strong>{t("search.foundB", { n })}</strong>{t("search.foundC")}</>
               )}
             </div>
-            <div className="sub">{t("search.bestMatches", { n: turn.results.length })}</div>
+            <div className="sub">{turn.picked_by_llm ? t("search.picked", { n: turn.results.length }) : t("search.bestMatches", { n: turn.results.length })}</div>
+            {turn.answer && (
+              <div className="direct-answer" data-testid="direct-answer">
+                <strong>{turn.answer.text}</strong>
+                <span className="small muted"> {t("search.answerFrom", { file: turn.results.find((r) => r.result_ref === turn.answer?.result_ref)?.title ?? "" })}</span>
+              </div>
+            )}
             <UnderstoodLine u={turn.understood} />
           </div>
         </div>

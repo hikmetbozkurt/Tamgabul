@@ -100,9 +100,9 @@ struct LlmLauncher {
 
 impl Launcher for LlmLauncher {
     fn launch(&self, cancel: &AtomicBool) -> Result<Arc<dyn Worker>, RuntimeError> {
-        let model = llm::locate(&self.path)?;
+        let files = llm::locate(&self.path)?;
         let exe = locate::find_llama_server(None)?.path;
-        let cfg = LlamaServerConfig::chat(exe, model);
+        let cfg = LlamaServerConfig::chat(exe, files.model, files.mmproj);
         Ok(Arc::new(
             ProcessLauncher::llama_server(cfg).launch_process(cancel)?,
         ))
@@ -442,7 +442,8 @@ fn validate_llm(
 
     // 2. format: GGUF instruction model with a chat template
     steps.run("format");
-    let (model, probe) = match llm::locate(&p).and_then(|m| llm::probe(&m).map(|pr| (m, pr))) {
+    let (files, probe) = match llm::locate(&p).and_then(|f| llm::probe(&f.model).map(|pr| (f, pr)))
+    {
         Ok(x) => x,
         Err(_) => {
             steps.fail("format", "addModel.fail.format.llm")?;
@@ -452,24 +453,38 @@ fn validate_llm(
     steps.ok(
         "format",
         format!(
-            "{} · {} · {}",
+            "{} · {} · {}{}",
             probe.architecture,
             probe.size_label.as_deref().unwrap_or("?"),
-            probe.precision
+            probe.precision,
+            if files.mmproj.is_some() {
+                " + image"
+            } else {
+                ""
+            }
         ),
     );
     cancelled(cancel)?;
 
-    // 3. checksum
+    // 3. checksum (model, then projector)
     steps.run("checksum");
-    let hash = match eg2::sha256_file(&model, |_, _| {}) {
-        Ok(h) => h,
-        Err(_) => {
-            steps.fail("checksum", "addModel.fail.readable.llm")?;
-            return Ok(None);
+    let mut pinned = true;
+    let mut hash = String::new();
+    for f in std::iter::once(&files.model).chain(files.mmproj.iter()) {
+        cancelled(cancel)?;
+        match eg2::sha256_file(f, |_, _| {}) {
+            Ok(h) => {
+                pinned &= llm::is_pinned(&h);
+                if hash.is_empty() {
+                    hash = h;
+                }
+            }
+            Err(_) => {
+                steps.fail("checksum", "addModel.fail.readable.llm")?;
+                return Ok(None);
+            }
         }
-    };
-    let pinned = llm::is_pinned(&hash);
+    }
     steps.ok(
         "checksum",
         Some(
@@ -495,15 +510,24 @@ fn validate_llm(
 
     // 5. smoke: one schema-constrained answer from a private worker
     steps.run("smoke");
-    match smoke::llm_smoke(LlamaServerConfig::chat(found.path, model.clone()), cancel) {
-        Ok(r) => steps.ok(
-            "smoke",
-            format!(
-                "JSON ✓ · {:.1} s load · {:.1} s answer",
-                r.cold_load.as_secs_f64(),
-                r.answer.as_secs_f64()
-            ),
-        ),
+    let cfg = LlamaServerConfig::chat(found.path, files.model.clone(), files.mmproj.clone());
+    let vision = match smoke::llm_smoke(cfg, cancel) {
+        Ok(r) => {
+            steps.ok(
+                "smoke",
+                format!(
+                    "JSON ✓ · image {} · {:.1} s load · {:.1} s answer",
+                    match r.vision {
+                        Some(true) => "✓",
+                        Some(false) => "✗",
+                        None => "–",
+                    },
+                    r.cold_load.as_secs_f64(),
+                    r.answer.as_secs_f64()
+                ),
+            );
+            r.vision == Some(true)
+        }
         Err(RuntimeError::Cancelled) => {
             return Err(IpcError::new(ErrorCode::UserCancelled, "cancelled"))
         }
@@ -511,7 +535,7 @@ fn validate_llm(
             steps.fail("smoke", "addModel.fail.smoke.llm")?;
             return Ok(None);
         }
-    }
+    };
 
     let display = probe
         .name
@@ -535,7 +559,15 @@ fn validate_llm(
         license_name: probe.license.clone(),
         runtime_adapter: "llama.cpp".into(),
         adapter_version: version,
-        capabilities: vec!["search_plan".into()],
+        capabilities: if vision {
+            vec![
+                "search_plan".into(),
+                "result_pick".into(),
+                "image_caption".into(),
+            ]
+        } else {
+            vec!["search_plan".into(), "result_pick".into()]
+        },
         embedding_dim: None,
         status: ModelStatus::Available,
         last_error_code: None,
