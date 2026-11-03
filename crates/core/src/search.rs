@@ -14,6 +14,7 @@ use rusqlite::{params, Connection};
 use crate::dto::{FileKind, ResultCard};
 use crate::error::{ErrorCode, IpcError};
 use crate::index::store::{self, Scope};
+use crate::index::text::fold;
 use crate::index::walk::is_within;
 
 fn err(e: impl std::fmt::Display) -> IpcError {
@@ -31,6 +32,9 @@ pub enum Reason {
     Keyword,
     Filename,
     Image,
+    Audio,
+    /// Words found in text read from an image or scanned page.
+    Ocr,
 }
 
 impl Reason {
@@ -40,6 +44,8 @@ impl Reason {
             Reason::Keyword => "keyword",
             Reason::Filename => "filename",
             Reason::Image => "image",
+            Reason::Audio => "audio",
+            Reason::Ocr => "ocr",
         }
     }
 }
@@ -97,6 +103,7 @@ pub fn terms(q: &str) -> Vec<String> {
     v
 }
 
+/// FTS query over folded text (the index stores `tg_fold(text)`).
 fn fts_query(terms: &[String]) -> Option<String> {
     if terms.is_empty() {
         return None;
@@ -104,7 +111,7 @@ fn fts_query(terms: &[String]) -> Option<String> {
     Some(
         terms
             .iter()
-            .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+            .map(|t| format!("\"{}\"", fold(t).replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(" OR "),
     )
@@ -152,19 +159,25 @@ fn keyword_candidates(
     conn: &Connection,
     generation: &str,
     terms: &[String],
-) -> Result<Vec<(i64, String)>, IpcError> {
+) -> Result<Vec<(i64, String, Reason)>, IpcError> {
     let Some(q) = fts_query(terms) else {
         return Ok(Vec::new());
     };
     let mut st = conn
         .prepare(
-            "SELECT c.chunk_id, c.document_id FROM chunk_fts f JOIN chunks c ON c.chunk_id = f.rowid
-             WHERE chunk_fts MATCH ?1 AND c.generation_id = ?2 ORDER BY bm25(chunk_fts) LIMIT ?3",
+            "SELECT c.chunk_id, c.document_id, c.modality FROM chunk_fts f JOIN chunks c ON c.chunk_id = f.rowid
+             WHERE chunk_fts MATCH ?1 AND c.generation_id = ?2 ORDER BY f.rank LIMIT ?3",
         )
         .map_err(err)?;
     let v = st
         .query_map(params![q, generation, CANDIDATES as i64], |r| {
-            Ok((r.get(0)?, r.get(1)?))
+            let m: String = r.get(2)?;
+            let reason = if m == "ocr" {
+                Reason::Ocr
+            } else {
+                Reason::Keyword
+            };
+            Ok((r.get(0)?, r.get(1)?, reason))
         })
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
@@ -184,11 +197,11 @@ fn filename_candidates(conn: &Connection, terms: &[String]) -> Result<Vec<String
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
-    let lower: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+    let lower: Vec<String> = terms.iter().map(|t| fold(t)).collect();
     let mut hits: Vec<(usize, String)> = rows
         .into_iter()
         .filter_map(|(id, p)| {
-            let name = Path::new(&p).file_name()?.to_string_lossy().to_lowercase();
+            let name = fold(&Path::new(&p).file_name()?.to_string_lossy());
             let n = lower.iter().filter(|t| name.contains(t.as_str())).count();
             (n > 0).then_some((n, id))
         })
@@ -219,7 +232,8 @@ pub fn search(
             .entry((doc.to_string(), chunk))
             .or_insert((0.0, reason));
         e.0 += weight / (RRF_K + rank as f64 + 1.0);
-        if reason == Reason::Keyword || reason == Reason::Filename {
+        // Exact words explain a hit better than "meaning".
+        if matches!(reason, Reason::Keyword | Reason::Filename | Reason::Ocr) {
             e.1 = reason;
         }
     };
@@ -240,8 +254,9 @@ pub fn search(
         }
     }
     if let Some(g) = generation {
-        for (rank, (chunk, doc)) in keyword_candidates(conn, g, &terms)?.iter().enumerate() {
-            add(doc, Some(*chunk), rank, Reason::Keyword, 1.0);
+        for (rank, (chunk, doc, reason)) in keyword_candidates(conn, g, &terms)?.iter().enumerate()
+        {
+            add(doc, Some(*chunk), rank, *reason, 1.0);
         }
     }
     for (rank, doc) in filename_candidates(conn, &terms)?.iter().enumerate() {
@@ -304,6 +319,9 @@ pub fn file_kind(db: &str) -> FileKind {
         "text" => FileKind::Text,
         "pdf" => FileKind::Pdf,
         "image" => FileKind::Image,
+        "audio" => FileKind::Audio,
+        "docx" | "pptx" | "xlsx" | "odf" | "rtf" => FileKind::Document,
+        "markup" => FileKind::Text,
         _ => FileKind::Other,
     }
 }
@@ -336,20 +354,32 @@ pub fn rfc3339_from_mtime(m: &str) -> String {
     )
 }
 
-/// Snippet of about `max` characters around the first matched term.
+/// Char index of the first folded match of any term.
+fn first_match(chars: &[char], terms: &[String]) -> Option<usize> {
+    let folded: Vec<char> = chars
+        .iter()
+        .map(|c| crate::index::text::fold_char(*c))
+        .collect();
+    terms
+        .iter()
+        .filter_map(|t| {
+            let t: Vec<char> = fold(t).chars().collect();
+            (!t.is_empty())
+                .then(|| folded.windows(t.len()).position(|w| w == t.as_slice()))
+                .flatten()
+        })
+        .min()
+}
+
+/// Snippet of about `max` characters around the first matched term
+/// (accent/case-insensitive, Turkish-aware).
 pub fn snippet(text: &str, terms: &[String], max: usize) -> String {
     let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let lower = flat.to_lowercase();
-    let pos = terms
-        .iter()
-        .filter_map(|t| lower.find(&t.to_lowercase()))
-        .min()
-        .unwrap_or(0);
-    let chars: Vec<(usize, char)> = flat.char_indices().collect();
-    let center = chars.iter().position(|(b, _)| *b >= pos).unwrap_or(0);
+    let chars: Vec<char> = flat.chars().collect();
+    let center = first_match(&chars, terms).unwrap_or(0);
     let start = center.saturating_sub(max / 3);
     let end = (start + max).min(chars.len());
-    let mut s: String = chars[start..end].iter().map(|(_, c)| c).collect();
+    let mut s: String = chars[start..end].iter().collect();
     if start > 0 {
         s = format!("…{}", s.trim_start());
     }
@@ -359,17 +389,23 @@ pub fn snippet(text: &str, terms: &[String], max: usize) -> String {
     s
 }
 
+/// The snippet's own spelling of each matched term ("Toplantı" for the
+/// query "toplanti"), for highlighting.
 pub fn highlights(snippet: &str, terms: &[String]) -> Vec<String> {
-    let lower = snippet.to_lowercase();
+    let chars: Vec<char> = snippet.chars().collect();
+    let folded: Vec<char> = chars
+        .iter()
+        .map(|c| crate::index::text::fold_char(*c))
+        .collect();
     let mut v = Vec::new();
     for t in terms {
-        let tl = t.to_lowercase();
-        if let Some(i) = lower.find(&tl) {
-            // Take the original-cased substring at the same char span.
-            let start_chars = lower[..i].chars().count();
-            let len = tl.chars().count();
-            let orig: String = snippet.chars().skip(start_chars).take(len).collect();
-            if !orig.is_empty() && !v.contains(&orig) {
+        let tf: Vec<char> = fold(t).chars().collect();
+        if tf.is_empty() {
+            continue;
+        }
+        if let Some(i) = folded.windows(tf.len()).position(|w| w == tf.as_slice()) {
+            let orig: String = chars[i..i + tf.len()].iter().collect();
+            if !v.contains(&orig) {
                 v.push(orig);
             }
         }
@@ -442,7 +478,17 @@ pub fn resolve(
             )
             .ok(),
     };
-    let (text, _page) = chunk_row.unwrap_or((None, None));
+    let (mut text, _page) = chunk_row.unwrap_or((None, None));
+    if text.is_none() {
+        // Image/audio hit: show the text read from the image, if any.
+        text = conn
+            .query_row(
+                "SELECT text FROM chunks WHERE document_id = ?1 AND text IS NOT NULL ORDER BY ordinal LIMIT 1",
+                [doc],
+                |r| r.get(0),
+            )
+            .ok();
+    }
     let snip = text.as_deref().map(|t| snippet(t, terms, 220));
     let marks = snip
         .as_deref()
@@ -510,6 +556,14 @@ mod tests {
         assert!(s.starts_with('…') && s.ends_with('…'));
         assert!(s.contains("Auction countdown timer"));
         assert_eq!(highlights(&s, &t), ["Auction", "timer"]);
+    }
+
+    #[test]
+    fn matching_ignores_case_accents_and_turkish_i() {
+        let t = terms("toplanti surum");
+        let s = snippet("Dün yapılan Toplantı notları: sürüm cuma.", &t, 200);
+        assert_eq!(highlights(&s, &t), ["Toplantı", "sürüm"]);
+        assert_eq!(fts_query(&terms("Sürüm İŞ")).unwrap(), "\"surum\"");
     }
 
     #[test]

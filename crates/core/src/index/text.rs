@@ -91,6 +91,25 @@ pub fn decode(bytes: &[u8]) -> Option<String> {
     }
 }
 
+/// One-to-one character folding for word search: lower case, Turkish
+/// `I/İ/ı` → `i`, accents removed (`ş→s`, `ü→u`, `é→e`). Same length in
+/// chars as the input, so match positions map back to the original text.
+pub fn fold_char(c: char) -> char {
+    use unicode_normalization::UnicodeNormalization;
+    match c {
+        'I' | 'İ' | 'ı' => 'i',
+        c if c.is_ascii() => c.to_ascii_lowercase(),
+        c => {
+            let lower = c.to_lowercase().next().unwrap_or(c);
+            lower.nfd().next().unwrap_or(lower)
+        }
+    }
+}
+
+pub fn fold(s: &str) -> String {
+    s.chars().map(fold_char).collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk {
     pub ordinal: u32,
@@ -197,6 +216,17 @@ mod tests {
         // "İşçi ağı" in Windows-1254
         let legacy = [0xDD, 0xFE, 0xE7, 0x69, 0x20, 0x61, 0xF0, 0xFD];
         assert_eq!(decode(&legacy).unwrap(), "İşçi ağı");
+    }
+
+    #[test]
+    fn folding_is_turkish_aware_and_length_preserving() {
+        assert_eq!(
+            fold("Toplantı İŞÇİ Ağaç Über café"),
+            "toplanti isci agac uber cafe"
+        );
+        for s in ["Toplantı", "İstanbul", "ÇĞÖŞÜ", "naïve"] {
+            assert_eq!(fold(s).chars().count(), s.chars().count());
+        }
     }
 
     #[test]

@@ -40,7 +40,13 @@ Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
 `npm run tauri dev` → Models → Add model → Embedding → `C:\AI\models\embeddinggemma-2` klasöründeki `.gguf` dosyasını seç. Uygulama 5 adımı kontrol eder (dosya, format, SHA-256, llama-server, kısa deneme) → Save. Durum "On disk" olur; ilk aramada ya da "Load" ile açılır, boşta kalınca kapanır (süre modelin kartından seçilir).
 
 ### Klasör ekleme (P1)
-Folders → Add folder → klasör seç → önizleme (dosya sayısı, tahmini boyut, otomatik hariç tutulanlar) → "Allow and scan". Okunanlar: `.md`, `.txt`, `.pdf` (metin katmanı; taranmış PDF'ler şimdilik atlanır) ve `.png/.jpg/.jpeg/.bmp/.gif` (EmbeddingGemma 2'nin görüntü kısmıyla). Dosyalar asla değiştirilmez. Tarama sırasında EmbeddingGemma 2 açılır, bitince boşta kalma süresine göre kapanır. "Remove & purge" klasörü aramadan hemen çıkarır ve indeksini siler.
+Folders → Add folder → klasör seç → önizleme (dosya sayısı, tahmini boyut, otomatik hariç tutulanlar) → "Allow and scan". Okunanlar (dosyalar asla değiştirilmez):
+- **Metin/kod:** md, txt, csv, json, yaml, log, srt… ve ~100 kod uzantısı; html/xml/svg; rtf.
+- **Belgeler:** docx, pptx, xlsx, odt/odp/ods; pdf (metin katmanı + taranmış sayfalar için OCR).
+- **Görseller:** png, jpg, gif, bmp, ico, tiff, webp, tga, pnm, dds, hdr, exr, qoi; Windows kodekleri varsa heic/heif, avif, jxr ve RAW (dng, cr2, nef, arw…). Hem görüntünün anlamı (EmbeddingGemma 2) hem içindeki yazı (Windows OCR) indekslenir.
+- **Ses:** wav, mp3, m4a/aac, flac, ogg, aiff, caf, mka — 30 sn'lik parçalar halinde EmbeddingGemma 2'nin ses kısmıyla. Konuşmanın yazıya dökülmesi (STT) henüz yok.
+- Okunmayanlar: eski `.doc/.xls/.ppt`, opus/wma, video.
+Türkçe OCR için Windows'ta Türkçe dil paketinin (OCR özelliği) yüklü olması gerekir: Ayarlar → Saat ve dil → Dil. Tarama sırasında EmbeddingGemma 2 açılır, bitince boşta kalma süresine göre kapanır. "Remove & purge" klasörü aramadan hemen çıkarır ve indeksini siler.
 
 ### Arama (P2)
 Search ekranında ya da widget'ta yaz → sonuçlar anlam + kelime + dosya adı ile bulunur. Aç / Klasörde göster / Önizle çalışır. Konuşmalar Memory ekranında saklanır (Settings'ten kapatılabilir).

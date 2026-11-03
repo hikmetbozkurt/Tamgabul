@@ -18,20 +18,24 @@ use rusqlite::Connection;
 
 use crate::error::{ErrorCode, IpcError};
 use crate::index::extract;
+use crate::index::media::{self, Platform};
 use crate::index::store::{self, DocMeta, NewChunk};
 use crate::index::text;
-use crate::index::walk::SourceKind;
 use crate::index::walk::{self, Limits};
+use crate::index::walk::{OfficeFormat, SourceKind};
 
 /// Turns chunk texts into vectors. The app implements it with EmbeddingGemma
 /// 2 (document prompt + title); tests use a deterministic fake.
 pub trait Embedder {
     fn embed_documents(&mut self, title: &str, texts: &[String])
         -> Result<Vec<Vec<f32>>, IpcError>;
-    /// Can this model embed images (vision encoder present)?
-    fn supports_images(&mut self) -> bool;
-    /// Raw image file bytes (PNG/JPEG/…) → one vector.
-    fn embed_image(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError>;
+    /// Vision encoder present?
+    fn supports_vision(&mut self) -> bool;
+    /// Audio encoder present?
+    fn supports_audio(&mut self) -> bool;
+    /// One encoded image (PNG) or audio clip (WAV) → one vector.
+    /// `ModelIncompatible` = this input was refused (skip it, keep going).
+    fn embed_media(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,6 +63,8 @@ pub struct JobInput<'a> {
     pub deny: &'a [PathBuf],
     pub limits: Limits,
     pub batch: usize,
+    /// OS OCR / codecs / PDF rendering.
+    pub platform: &'a dyn Platform,
 }
 
 fn meta<'a>(c: &'a walk::Candidate, mtime: &'a str, hash: Option<&'a str>) -> DocMeta<'a> {
@@ -78,6 +84,237 @@ fn read_file(p: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     f.take(max.min(MAX_READ) + 1).read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+/// Something to embed: a text chunk (from the file, a PDF page or OCR) or
+/// a media segment (image, audio).
+pub enum Piece {
+    Text {
+        chunk: text::Chunk,
+        page: Option<u32>,
+        ocr: bool,
+    },
+    Media {
+        modality: &'static str,
+        bytes: Vec<u8>,
+        time_ms: Option<(u64, u64)>,
+    },
+}
+
+/// Pages with fewer letters than this are treated as scanned and OCR'd.
+const PDF_OCR_MIN_CHARS: usize = 40;
+const PDF_OCR_MAX_PAGES: usize = 300;
+const PDF_RENDER_WIDTH: u32 = 1700;
+
+fn letters(s: &str) -> usize {
+    s.chars().filter(|c| c.is_alphanumeric()).count()
+}
+
+fn push_text(out: &mut Vec<Piece>, body: &str, page: Option<u32>, ocr: bool) {
+    for chunk in text::chunk(body) {
+        if out.len() >= text::MAX_CHUNKS_PER_DOC {
+            return;
+        }
+        out.push(Piece::Text { chunk, page, ocr });
+    }
+}
+
+fn ocr_into(out: &mut Vec<Piece>, platform: &dyn Platform, png: &[u8], page: Option<u32>) {
+    if let Some(Ok(t)) = platform.ocr(png) {
+        if letters(&t) >= 3 {
+            push_text(out, &t, page, true);
+        }
+    }
+}
+
+/// Parse one file into pieces. `Err(reason)` = skip the file (recorded).
+pub fn extract_pieces(
+    kind: SourceKind,
+    bytes: Vec<u8>,
+    ext: Option<&str>,
+    platform: &dyn Platform,
+    embedder: &mut dyn Embedder,
+    cancel: &AtomicBool,
+) -> Result<Vec<Piece>, &'static str> {
+    let mut out = Vec::new();
+    match kind {
+        SourceKind::Markdown | SourceKind::Text => {
+            let body = text::decode(&bytes).ok_or("binary")?;
+            push_text(&mut out, &body, None, false);
+        }
+        SourceKind::Markup => {
+            let body = text::decode(&bytes).ok_or("binary")?;
+            push_text(
+                &mut out,
+                &media::strip_markup(&body, media::HTML_BLOCKS),
+                None,
+                false,
+            );
+        }
+        SourceKind::Rtf => {
+            let body = text::decode(&bytes).ok_or("binary")?;
+            push_text(&mut out, &media::rtf_text(&body), None, false);
+        }
+        SourceKind::Office(f) => {
+            let k = match f {
+                OfficeFormat::Docx => media::OfficeKind::Docx,
+                OfficeFormat::Pptx => media::OfficeKind::Pptx,
+                OfficeFormat::Xlsx => media::OfficeKind::Xlsx,
+                OfficeFormat::OpenDocument => media::OfficeKind::OpenDocument,
+            };
+            let body = media::office_text(&bytes, k).map_err(|e| e.code())?;
+            push_text(&mut out, &body, None, false);
+        }
+        SourceKind::Pdf => {
+            let pages = match extract::pdf_pages(bytes.clone(), extract::PDF_TIMEOUT) {
+                Ok(p) => p,
+                Err(extract::PdfError::NoText) | Err(extract::PdfError::Unreadable) => Vec::new(),
+                Err(e) => return Err(e.code()),
+            };
+            for (i, page) in pages.iter().enumerate() {
+                push_text(&mut out, page, Some(i as u32 + 1), false);
+            }
+            // Scanned pages (little or no text layer) go through OCR.
+            if platform.ocr_available() {
+                let scanned: Vec<u32> = if pages.is_empty() {
+                    (0..PDF_OCR_MAX_PAGES as u32).collect()
+                } else {
+                    pages
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| letters(p) < PDF_OCR_MIN_CHARS)
+                        .map(|(i, _)| i as u32)
+                        .take(PDF_OCR_MAX_PAGES)
+                        .collect()
+                };
+                if !scanned.is_empty() && !cancel.load(Ordering::Relaxed) {
+                    if let Some(renders) =
+                        platform.render_pdf_pages(&bytes, &scanned, PDF_RENDER_WIDTH)
+                    {
+                        for (i, png) in renders {
+                            if cancel.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            ocr_into(&mut out, platform, &png, Some(i + 1));
+                        }
+                    }
+                }
+            }
+            if out.is_empty() {
+                return Err(if platform.ocr_available() {
+                    "pdf_no_text"
+                } else {
+                    "pdf_no_text_no_ocr"
+                });
+            }
+        }
+        SourceKind::Image => {
+            let img = media::normalize_image(&bytes, ext, platform).map_err(|e| e.code())?;
+            ocr_into(&mut out, platform, &img.ocr_png, None);
+            if embedder.supports_vision() {
+                out.push(Piece::Media {
+                    modality: "image",
+                    bytes: img.model_png,
+                    time_ms: None,
+                });
+            }
+            if out.is_empty() {
+                return Err("no_image_encoder");
+            }
+        }
+        SourceKind::Audio => {
+            if !embedder.supports_audio() {
+                return Err("no_audio_encoder");
+            }
+            let samples = media::decode_audio(bytes, ext).map_err(|e| e.code())?;
+            for seg in media::audio_segments(&samples) {
+                out.push(Piece::Media {
+                    modality: "audio",
+                    bytes: seg.wav,
+                    time_ms: Some((seg.start_ms, seg.end_ms)),
+                });
+            }
+            if out.is_empty() {
+                return Err("silent");
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Embed pieces. Text in batches (document prompt with the file name as
+/// title); media one at a time. `Ok(None)` = cancelled.
+pub fn embed_pieces(
+    title: &str,
+    pieces: Vec<Piece>,
+    embedder: &mut dyn Embedder,
+    batch: usize,
+    cancel: &AtomicBool,
+) -> Result<Option<Vec<NewChunk>>, IpcError> {
+    let mut out: Vec<NewChunk> = Vec::with_capacity(pieces.len());
+    let mut texts: Vec<(text::Chunk, Option<u32>, bool)> = Vec::new();
+    let mut media_pieces = Vec::new();
+    for p in pieces {
+        match p {
+            Piece::Text { chunk, page, ocr } => texts.push((chunk, page, ocr)),
+            m => media_pieces.push(m),
+        }
+    }
+    for group in texts.chunks(batch.max(1)) {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let inputs: Vec<String> = group.iter().map(|(c, _, _)| c.text.clone()).collect();
+        let vecs = embedder.embed_documents(title, &inputs)?;
+        if vecs.len() != group.len() {
+            return Err(IpcError::new(
+                ErrorCode::Internal,
+                "embedding count mismatch",
+            ));
+        }
+        for ((c, page, ocr), v) in group.iter().zip(vecs) {
+            out.push(NewChunk {
+                ordinal: out.len() as u32,
+                modality: if *ocr { "ocr" } else { "text" },
+                text: Some(c.text.clone()),
+                page: *page,
+                line_start: (!*ocr).then_some(c.line_start),
+                line_end: (!*ocr).then_some(c.line_end),
+                time_ms: None,
+                vector: v,
+            });
+        }
+    }
+    for m in media_pieces {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let Piece::Media {
+            modality,
+            bytes,
+            time_ms,
+        } = m
+        else {
+            continue;
+        };
+        match embedder.embed_media(&bytes) {
+            Ok(v) => out.push(NewChunk {
+                ordinal: out.len() as u32,
+                modality,
+                text: None,
+                page: None,
+                line_start: None,
+                line_end: None,
+                time_ms,
+                vector: v,
+            }),
+            // The model refused this one input (e.g. undecodable): keep the
+            // rest of the file.
+            Err(e) if e.code == ErrorCode::ModelIncompatible => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Some(out))
 }
 
 pub fn run(
@@ -166,109 +403,34 @@ pub fn run(
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            // (page, chunk) pairs of text, or a single image.
-            let mut pieces: Vec<(Option<u32>, text::Chunk)> = Vec::new();
-            let mut image: Option<Vec<f32>> = None;
-            match c.kind {
-                SourceKind::Markdown | SourceKind::Text => {
-                    let Some(body) = text::decode(&bytes) else {
-                        p.skipped += 1;
-                        return store::record_skipped(
-                            conn,
-                            input.scope_id,
-                            &meta(c, &mtime, Some(&hash)),
-                            "SKIPPED",
-                            "binary",
-                        );
-                    };
-                    pieces.extend(text::chunk(&body).into_iter().map(|ch| (None, ch)));
+            let ext = c
+                .path
+                .extension()
+                .map(|e| e.to_string_lossy().to_ascii_lowercase());
+            let pieces = match extract_pieces(
+                c.kind,
+                bytes,
+                ext.as_deref(),
+                input.platform,
+                embedder,
+                cancel,
+            ) {
+                Ok(p) => p,
+                Err(reason) => {
+                    p.skipped += 1;
+                    return store::record_skipped(
+                        conn,
+                        input.scope_id,
+                        &meta(c, &mtime, Some(&hash)),
+                        "SKIPPED",
+                        reason,
+                    );
                 }
-                SourceKind::Pdf => match extract::pdf_pages(bytes, extract::PDF_TIMEOUT) {
-                    Ok(pages) => {
-                        for (i, page) in pages.iter().enumerate() {
-                            for ch in text::chunk(page) {
-                                if pieces.len() >= text::MAX_CHUNKS_PER_DOC {
-                                    break;
-                                }
-                                pieces.push((Some(i as u32 + 1), ch));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        p.skipped += 1;
-                        return store::record_skipped(
-                            conn,
-                            input.scope_id,
-                            &meta(c, &mtime, Some(&hash)),
-                            "SKIPPED",
-                            e.code(),
-                        );
-                    }
-                },
-                SourceKind::Image => {
-                    if !embedder.supports_images() {
-                        p.skipped += 1;
-                        return store::record_skipped(
-                            conn,
-                            input.scope_id,
-                            &meta(c, &mtime, Some(&hash)),
-                            "SKIPPED",
-                            "no_image_encoder",
-                        );
-                    }
-                    match embedder.embed_image(&bytes) {
-                        Ok(v) => image = Some(v),
-                        // One undecodable image must not stop the scan.
-                        Err(e) if e.code == ErrorCode::ModelIncompatible => {
-                            p.skipped += 1;
-                            return store::record_skipped(
-                                conn,
-                                input.scope_id,
-                                &meta(c, &mtime, Some(&hash)),
-                                "SKIPPED",
-                                "image_unreadable",
-                            );
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-            }
-            let mut out = Vec::with_capacity(pieces.len().max(1));
-            if let Some(v) = image {
-                out.push(NewChunk {
-                    ordinal: 0,
-                    modality: "image",
-                    text: None,
-                    page: None,
-                    line_start: None,
-                    line_end: None,
-                    vector: v,
-                });
-            }
-            for (n, batch) in pieces.chunks(input.batch.max(1)).enumerate() {
-                if cancel.load(Ordering::Relaxed) {
-                    return Ok(false);
-                }
-                let texts: Vec<String> = batch.iter().map(|(_, c)| c.text.clone()).collect();
-                let vecs = embedder.embed_documents(&title, &texts)?;
-                if vecs.len() != batch.len() {
-                    return Err(IpcError::new(
-                        ErrorCode::Internal,
-                        "embedding count mismatch",
-                    ));
-                }
-                for (i, ((page, ch), v)) in batch.iter().zip(vecs).enumerate() {
-                    out.push(NewChunk {
-                        ordinal: (n * input.batch.max(1) + i) as u32,
-                        modality: "text",
-                        text: Some(ch.text.clone()),
-                        page: *page,
-                        line_start: Some(ch.line_start),
-                        line_end: Some(ch.line_end),
-                        vector: v,
-                    });
-                }
-            }
+            };
+            let out = match embed_pieces(&title, pieces, embedder, input.batch, cancel)? {
+                Some(out) => out,
+                None => return Ok(false), // cancelled
+            };
             if out.is_empty() {
                 p.skipped += 1;
                 return store::record_skipped(

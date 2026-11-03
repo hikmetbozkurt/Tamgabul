@@ -119,7 +119,9 @@
   "file.markdown": "Markdown",
   "file.text": "Metin",
   "file.pdf": "PDF",
+  "file.document": "Belge",
   "file.image": "Görsel",
+  "file.audio": "Ses",
   "file.other": "Dosya",
 
   "match.previous_result": "Daha önce gösterildi",
@@ -127,6 +129,7 @@
   "match.keyword": "Kelime eşleşmesi",
   "match.filename": "Dosya adı",
   "match.image": "Görsel eşleşmesi",
+  "match.audio": "Ses eşleşmesi",
   "match.ocr": "Görseldeki yazı",
 
   "preview.label": "Önizleme",

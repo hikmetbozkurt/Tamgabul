@@ -20,7 +20,9 @@ export const FILE_ICON: Record<FileKind, IconName> = {
   markdown: "file",
   text: "fileText",
   pdf: "fileText",
+  document: "fileText",
   image: "image",
+  audio: "speakerWaves",
   other: "file",
 };
 
@@ -28,6 +30,8 @@ export const FILE_KIND_KEY: Record<FileKind, string> = {
   markdown: "file.markdown",
   text: "file.text",
   pdf: "file.pdf",
+  document: "file.document",
   image: "file.image",
+  audio: "file.audio",
   other: "file.other",
 };

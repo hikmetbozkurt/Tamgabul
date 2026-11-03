@@ -29,3 +29,8 @@ Code + automated tests + commands/results + platform/hardware/runtime versions +
 - **App:** `search`, `preview_result`, `open_result` (re-checks grant + file, then Explorer open / select), `list_history`, `session_turns`, `delete_session`, `clear_history`. Falls back to word + file-name search if the model can't start.
 - **Tests:** search unit tests + integration test (meaning, words in PDF, file name of an image, card/snippet/highlights, history round trip, revoke hides results now and in history).
 - **Not yet:** LLM clarification, vector index (brute force is linear in chunks), query-time image search by example, evaluation set.
+
+### Update — 2026-11-03
+- **Fix:** meaning matches are now ranked per modality (text/OCR, image, audio) before fusion. Before, the band was relative to the best text↔text cosine, so text↔image hits (lower scale) were almost always filtered out.
+- Word search is accent/case-insensitive and Turkish-aware (folded FTS + folded query); OCR words are reported as "Text in image"; image/audio results show the image's OCR text as snippet when there is one.
+- Tests: image vector ranks images first; OCR words find screenshots and scanned PDFs; folded highlights keep original spelling.

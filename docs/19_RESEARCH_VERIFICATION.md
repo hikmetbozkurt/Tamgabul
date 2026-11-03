@@ -22,12 +22,21 @@ Checked from the published files and the llama.cpp source, then confirmed on Win
 - **Model card prompts:** query `task: search result | query: …`, document `title: … | text: …`; media without prefix; truncated (Matryoshka) vectors must be re-normalized.
 - **Lifecycle:** "unloaded" is implemented as *worker process exited*; the OS frees its RAM/VRAM. Windows ties workers to the app with a Job Object (`KILL_ON_JOB_CLOSE`), Linux with `PR_SET_PDEATHSIG`; macOS has no equivalent and relies on explicit shutdown (gap).
 
+## Media pipeline (2026-11-03)
+- **Images:** portable decoder covers PNG/APNG, JPEG, GIF, BMP, ICO, TIFF, WebP, PNM, TGA, DDS, HDR, EXR, QOI (round-trip tested). HEIC/HEIF, AVIF, JPEG XR and camera RAW go through the Windows Imaging Component and work only when the matching Windows codec is installed (HEIF/AV1 extensions, camera codec pack). Every image is re-encoded to PNG ≤1536 px for the vision encoder and ≤4096 px for OCR.
+- **OCR:** `Windows.Media.Ocr` with the OCR languages installed for the user's profile (Turkish needs the Turkish language/OCR feature in Windows settings). One recognizer language per run. Not available on macOS/Linux yet (macOS Vision later).
+- **PDF:** text layer via `pdf-extract` (isolated thread, 30 s); pages with < 40 letters, or PDFs the parser can't read, are rendered by `Windows.Data.Pdf` at 1700 px and OCR'd (max 300 pages per file).
+- **Audio:** `symphonia` decodes WAV, MP3, AAC/M4A, FLAC, ALAC, Vorbis/OGG, AIFF, CAF, MKA; Opus, WMA and AMR are not supported. Mixed to mono, resampled to 16 kHz, 30 s segments (max 40 per file, sampled evenly) embedded by the EG2 audio encoder. No transcription yet (STT, P6), so recordings are found by meaning of the sound and by file name, not by exact words.
+- **Documents:** DOCX/PPTX/XLSX and ODT/ODP/ODS from their XML parts; RTF and HTML/XML/SVG stripped; ~150 text/code extensions as plain text. Legacy binary `.doc/.xls/.ppt` are not read.
+- **Word search:** contentless FTS5 trigram over `tg_fold(text)` (lower case, Turkish I/İ/ı → i, accents removed); query terms are folded the same way; highlights map back to the original spelling.
+
 ## Open verification tickets
 - V01: Pin Windows llama.cpp binary and run local E4B Q4_K_M load, JSON output, unload and RSS/VRAM check.
 - V02: Pin EG2 checkpoint/version, text+image encoding correct vectors, user-selected local checkpoint, CPU/GPU and runtime packaging with minimal stack. **DONE 2026-11-03 on Windows** with llama.cpp build 12024 (`ddf48f85c`): text, image and audio embeddings 768d and sane; unload and idle unload end the process. Details in agent_tasks/01.
 - V03: Pinned sqlite-vec and FTS5 builds on Win/mac; fallback strategy.
 - V04: Chosen STT/TTS implementations, exact model versions/licenses, Windows/mac binary packaging and voice metrics. Do not assume previously named TTS licenses/performance without checking each release artifact.
 - V05: macOS window/menu-bar and shortcut behavior, permissions; packaging signing/notarization.
+- V07: OCR quality and speed on real Turkish/English screenshots and scanned PDFs on Windows; HEIC/AVIF decoding with and without the Windows codec extensions; audio search usefulness without STT.
 - V06: LoRA/PEFT adaptation of `google/embeddinggemma-2` exact modules/quantization/export to runtime under 16GB VRAM; only after MVP.
 
 ## Distinguish license layers

@@ -21,11 +21,18 @@ pub struct Migration {
 }
 
 /// Single source of truth for the schema: the proposed migration in `database/`.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "001_initial",
-    sql: include_str!("../../../database/001_initial.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "001_initial",
+        sql: include_str!("../../../database/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "002_media_and_folded_fts",
+        sql: include_str!("../../../database/002_media_and_folded_fts.sql"),
+    },
+];
 
 fn db_err(e: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::DbMigrationFailed, e.to_string())
@@ -33,7 +40,24 @@ fn db_err(e: impl std::fmt::Display) -> IpcError {
 
 /// Connection-level pragmas. They live here (not in a transaction) because
 /// `journal_mode=WAL` cannot be changed inside a transaction.
+/// `tg_fold(text)`: the folding used by the word index (see
+/// `index::text::fold`). Must exist on every connection that writes chunks.
+fn register_functions(conn: &Connection) -> Result<(), IpcError> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "tg_fold",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let s: Option<String> = ctx.get(0)?;
+            Ok(s.map(|s| crate::index::text::fold(&s)))
+        },
+    )
+    .map_err(db_err)
+}
+
 fn configure(conn: &Connection) -> Result<(), IpcError> {
+    register_functions(conn)?;
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(db_err)?;
     // The UI connection and background jobs write concurrently (WAL).
@@ -76,19 +100,47 @@ pub fn current_version(conn: &Connection) -> Result<u32, IpcError> {
 pub fn migrate(conn: &mut Connection, migrations: &[Migration]) -> Result<u32, IpcError> {
     let start = current_version(conn)?;
     let mut version = start;
+    // Table rebuilds (copy → drop → rename) must not cascade deletes, so
+    // foreign keys are off while migrating and checked before each commit.
+    // (The pragma is a no-op inside a transaction, hence out here.)
+    conn.pragma_update(None, "foreign_keys", "OFF")
+        .map_err(db_err)?;
+    let result = run_migrations(conn, migrations, start, &mut version);
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(db_err)?;
+    result.map(|_| version)
+}
+
+fn run_migrations(
+    conn: &mut Connection,
+    migrations: &[Migration],
+    start: u32,
+    version: &mut u32,
+) -> Result<(), IpcError> {
     for m in migrations.iter().filter(|m| m.version > start) {
         let tx = conn.transaction().map_err(db_err)?;
         tx.execute_batch(&migration_body(m.sql))
             .map_err(|e| db_err(format!("migration {} failed: {e}", m.name)))?;
+        let broken: i64 = tx
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .map_err(db_err)?;
+        if broken > 0 {
+            return Err(db_err(format!(
+                "migration {} broke {broken} references",
+                m.name
+            )));
+        }
         tx.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (?1, ?2)",
             params![m.version, m.name],
         )
         .map_err(db_err)?;
         tx.commit().map_err(db_err)?;
-        version = m.version;
+        *version = m.version;
     }
-    Ok(version)
+    Ok(())
 }
 
 fn backup_path(db_path: &Path, from_version: u32) -> PathBuf {
@@ -219,7 +271,7 @@ mod tests {
     fn fresh_db_migrates_to_latest_with_all_tables() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_and_migrate(&dir.path().join("t.db")).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 1);
+        assert_eq!(current_version(&conn).unwrap(), 2);
         let t = tables(&conn);
         for want in [
             "schema_migrations",
@@ -281,9 +333,9 @@ mod tests {
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(n, 2);
         // Nothing pending on the second open, so no backup is written.
-        assert!(!backup_path(&p, 1).exists());
+        assert!(!backup_path(&p, 2).exists());
     }
 
     #[test]
@@ -292,13 +344,13 @@ mod tests {
         configure(&conn).unwrap();
         migrate(&mut conn, MIGRATIONS).unwrap();
         let bad = [Migration {
-            version: 2,
-            name: "002_bad",
+            version: 3,
+            name: "003_bad",
             sql: "CREATE TABLE ok_t(x); SELEC nonsense;",
         }];
         let err = migrate(&mut conn, &bad).unwrap_err();
         assert_eq!(err.code, ErrorCode::DbMigrationFailed);
-        assert_eq!(current_version(&conn).unwrap(), 1);
+        assert_eq!(current_version(&conn).unwrap(), 2);
         assert!(
             !tables(&conn).iter().any(|t| t == "ok_t"),
             "partial migration leaked"
@@ -336,6 +388,63 @@ mod tests {
         assert_eq!(emb.status, ModelStatus::Available);
         assert_eq!(emb.display_name.as_deref(), Some("EmbeddingGemma 2"));
         assert_eq!(active_scope_count(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn v1_to_v2_keeps_chunks_vectors_and_rebuilds_folded_fts() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        migrate(&mut conn, &MIGRATIONS[..1]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO model_registry(model_id, category, display_name, path, format, runtime_adapter, adapter_version)
+                VALUES ('m','embedding','E','x','gguf','l','1');
+             INSERT INTO index_generations(generation_id, embedding_model_hash, model_revision, adapter_version,
+                preprocessing_pipeline, query_instruction, document_instruction, dimension, normalization,
+                modalities_json, fingerprint) VALUES ('g','h','r','a','p','q','d',128,'l2','[]','f');
+             INSERT INTO documents(document_id, canonical_path, file_type, size_bytes, mtime) VALUES ('d','/x.md','markdown',1,'0');
+             INSERT INTO chunks(chunk_id, document_id, generation_id, ordinal, modality, text) VALUES (7,'d','g',0,'text','Toplantı sürümü');
+             INSERT INTO embedding_records(chunk_id, generation_id, dimension, vector) VALUES (7,'g',128,zeroblob(512));",
+        )
+        .unwrap();
+        migrate(&mut conn, MIGRATIONS).unwrap();
+        assert_eq!(current_version(&conn).unwrap(), 2);
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embedding_records", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "vectors survive the table rebuild");
+        let hit: i64 = conn
+            .query_row(
+                "SELECT rowid FROM chunk_fts WHERE chunk_fts MATCH '\"toplanti\" AND \"surumu\"'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hit, 7);
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fk, 1);
+        // Audio chunks are now allowed; deleting a chunk clears its FTS row.
+        conn.execute(
+            "INSERT INTO chunks(document_id, generation_id, ordinal, modality, time_start_ms, time_end_ms)
+             VALUES ('d','g',1,'audio',0,30000)",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM chunks WHERE chunk_id = 7", [])
+            .unwrap();
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunk_fts WHERE chunk_fts MATCH 'toplanti'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
+        let emb: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embedding_records", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(emb, 0, "cascade still works after the rebuild");
     }
 
     #[test]

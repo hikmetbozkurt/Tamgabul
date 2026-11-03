@@ -391,6 +391,8 @@ pub struct NewChunk {
     pub page: Option<u32>,
     pub line_start: Option<u32>,
     pub line_end: Option<u32>,
+    /// Audio segment range.
+    pub time_ms: Option<(u64, u64)>,
     pub vector: Vec<f32>,
 }
 
@@ -483,8 +485,9 @@ pub fn commit_document(
     {
         let mut ins = tx
             .prepare(
-                "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text, page, line_start, line_end)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text, page, line_start, line_end,
+                    time_start_ms, time_end_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )
             .map_err(err)?;
         let mut emb = tx
@@ -499,7 +502,9 @@ pub fn commit_document(
                 c.text,
                 c.page,
                 c.line_start,
-                c.line_end
+                c.line_end,
+                c.time_ms.map(|t| t.0 as i64),
+                c.time_ms.map(|t| t.1 as i64)
             ])
             .map_err(err)?;
             let chunk_id = tx.last_insert_rowid();

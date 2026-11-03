@@ -8,3 +8,16 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# OCR, WIC image decoding and PDF rendering through WinRT (no downloads).
+windows = { version = "0.61", features = [
+    "Data_Pdf",
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+    "Win32_System_WinRT",
+] }

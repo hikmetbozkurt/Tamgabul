@@ -15,6 +15,7 @@ use tamgabul_core::db;
 use tamgabul_core::dto::{IndexStats, RevokeRequest, ScopePreview, ScopeStatus, ScopeSummary};
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Progress};
+use tamgabul_core::index::media::Platform;
 use tamgabul_core::index::store::{self, GenerationSpec, Scope, ScopeState};
 use tamgabul_core::index::walk::{self, Limits};
 use tamgabul_core::model::{ModelCategory, ModelStatus};
@@ -480,11 +481,15 @@ impl Embedder for Eg2Embedder {
         Ok(out)
     }
 
-    fn supports_images(&mut self) -> bool {
+    fn supports_vision(&mut self) -> bool {
         self.client().is_ok() && self.props.as_ref().is_some_and(|p| p.vision)
     }
 
-    fn embed_image(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError> {
+    fn supports_audio(&mut self) -> bool {
+        self.client().is_ok() && self.props.as_ref().is_some_and(|p| p.audio)
+    }
+
+    fn embed_media(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError> {
         let marker = self
             .props
             .as_ref()
@@ -512,21 +517,58 @@ impl Embedder for Eg2Embedder {
     }
 }
 
+/// OCR, extra image codecs and PDF page rendering from the OS
+/// (`tamgabul_platform::media`; Windows today).
+struct OsMedia;
+
+impl Platform for OsMedia {
+    fn decode_to_png(&self, bytes: &[u8], max_side: u32) -> Option<Vec<u8>> {
+        tamgabul_platform::media::decode_to_png(bytes, max_side).ok()
+    }
+    fn ocr(&self, png: &[u8]) -> Option<Result<String, String>> {
+        match tamgabul_platform::media::ocr(png) {
+            Ok(t) => Some(Ok(t.text())),
+            Err(tamgabul_platform::media::MediaError::Unsupported) => None,
+            Err(e) => Some(Err(e.to_string())),
+        }
+    }
+    fn ocr_available(&self) -> bool {
+        tamgabul_platform::media::ocr_supported()
+    }
+    fn render_pdf_pages(
+        &self,
+        pdf: &[u8],
+        pages: &[u32],
+        width: u32,
+    ) -> Option<Vec<(u32, Vec<u8>)>> {
+        let mut out = Vec::new();
+        tamgabul_platform::media::pdf_render_pages(pdf, pages, width, &mut |i, png| {
+            out.push((i, png))
+        })
+        .ok()?;
+        Some(out)
+    }
+}
+
 pub fn generation_spec(m: &ModelRecord) -> GenerationSpec {
     GenerationSpec {
         embedding_model_id: m.model_id.clone(),
         model_hash: m.weights_sha256.clone().unwrap_or_else(|| "unknown".into()),
         model_revision: m.model_revision.clone().unwrap_or_else(|| "local".into()),
         adapter_version: format!("{} {}", m.runtime_adapter, m.adapter_version),
-        preprocessing: "v2: text/markdown chunks 1000/1600 chars with lines; pdf text per page; images raw to vision encoder".into(),
+        preprocessing: "v3: text/markup/office/rtf chunks 1000/1600 chars with lines; pdf text per page + OCR of scanned pages; images normalized to PNG ≤1536 px + OCR; audio 16 kHz mono 30 s segments; tg_fold word index".into(),
         query_instruction: eg2::query_prompt(eg2::Task::SearchResult, "{query}"),
         document_instruction: eg2::document_prompt(Some("{title}"), "{content}"),
         dimension: eg2::NATIVE_DIM as u32,
         normalization: "l2".into(),
-        modalities: if m.capabilities.iter().any(|c| c == "image") {
-            vec!["text".into(), "image".into()]
-        } else {
-            vec!["text".into()]
+        modalities: {
+            let mut v = vec!["text".to_string()];
+            for k in ["image", "audio"] {
+                if m.capabilities.iter().any(|c| c == k) {
+                    v.push(k.to_string());
+                }
+            }
+            v
         },
     }
 }
@@ -579,6 +621,7 @@ fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome,
                 ..Limits::default()
             },
             batch: EMBED_BATCH,
+            platform: &OsMedia,
         },
         &mut embedder,
         cancel,

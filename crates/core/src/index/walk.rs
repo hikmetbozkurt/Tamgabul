@@ -68,42 +68,190 @@ pub const DRIVE_ROOT_EXCLUDES: &[&str] = &[
     "library",
 ];
 
-/// File kinds indexed today. Images go to the vision encoder; PDFs are
-/// text-extracted page by page.
+/// File kinds indexed. Classification is by extension; content is still
+/// validated by each parser (a renamed binary is skipped, not indexed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
     Markdown,
+    /// Plain text, logs, data and source code.
     Text,
+    /// HTML/XML/SVG: markup stripped.
+    Markup,
+    Rtf,
+    Office(OfficeFormat),
     Pdf,
     Image,
+    Audio,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfficeFormat {
+    Docx,
+    Pptx,
+    Xlsx,
+    OpenDocument,
+}
+
+const TEXT_EXT: &[&str] = &[
+    "txt",
+    "text",
+    "log",
+    "csv",
+    "tsv",
+    "json",
+    "jsonl",
+    "ndjson",
+    "yaml",
+    "yml",
+    "toml",
+    "ini",
+    "cfg",
+    "conf",
+    "properties",
+    "env",
+    "srt",
+    "vtt",
+    "tex",
+    "bib",
+    "org",
+    "rst",
+    "adoc",
+    "asciidoc",
+    // source code
+    "rs",
+    "py",
+    "pyi",
+    "ipynb",
+    "js",
+    "mjs",
+    "cjs",
+    "jsx",
+    "ts",
+    "tsx",
+    "java",
+    "kt",
+    "kts",
+    "scala",
+    "groovy",
+    "gradle",
+    "c",
+    "h",
+    "cc",
+    "cpp",
+    "cxx",
+    "hpp",
+    "hh",
+    "cs",
+    "fs",
+    "vb",
+    "go",
+    "rb",
+    "php",
+    "swift",
+    "m",
+    "mm",
+    "dart",
+    "lua",
+    "pl",
+    "pm",
+    "r",
+    "jl",
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "ps1",
+    "psm1",
+    "bat",
+    "cmd",
+    "sql",
+    "css",
+    "scss",
+    "sass",
+    "less",
+    "vue",
+    "svelte",
+    "astro",
+    "graphql",
+    "proto",
+    "cmake",
+    "make",
+    "mk",
+    "dockerfile",
+    "tf",
+    "hcl",
+    "nix",
+    "zig",
+    "nim",
+    "ex",
+    "exs",
+    "erl",
+    "hs",
+    "clj",
+    "elm",
+    "sol",
+];
+const MARKUP_EXT: &[&str] = &[
+    "html", "htm", "xhtml", "xml", "svg", "xaml", "plist", "opml", "rss", "atom",
+];
+/// Decoded by the portable decoder or, for the last group, by OS codecs.
+const IMAGE_EXT: &[&str] = &[
+    "png", "apng", "jpg", "jpeg", "jpe", "jfif", "pjpeg", "pjp", "gif", "bmp", "dib", "ico", "tif",
+    "tiff", "webp", "pbm", "pgm", "ppm", "pnm", "pam", "tga", "dds", "hdr", "exr", "qoi",
+    // OS codecs (Windows Imaging Component)
+    "heic", "heif", "hif", "avif", "jxr", "wdp", "hdp", "dng", "cr2", "cr3", "nef", "nrw", "arw",
+    "srf", "sr2", "orf", "rw2", "raf", "srw", "pef", "x3f", "3fr", "rwl", "erf", "kdc", "mrw",
+];
+const AUDIO_EXT: &[&str] = &[
+    "wav", "wave", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "aif", "aiff", "aifc", "caf",
+    "mka", "alac",
+];
 
 impl SourceKind {
     pub fn from_path(p: &Path) -> Option<Self> {
         let ext = p.extension()?.to_str()?.to_ascii_lowercase();
-        match ext.as_str() {
-            "md" | "markdown" => Some(SourceKind::Markdown),
-            "txt" => Some(SourceKind::Text),
-            "pdf" => Some(SourceKind::Pdf),
-            // Formats the llama.cpp image loader (stb_image) decodes.
-            "png" | "jpg" | "jpeg" | "bmp" | "gif" => Some(SourceKind::Image),
-            _ => None,
-        }
+        let e = ext.as_str();
+        Some(match e {
+            "md" | "markdown" | "mdx" => SourceKind::Markdown,
+            "rtf" => SourceKind::Rtf,
+            "pdf" => SourceKind::Pdf,
+            "docx" | "docm" | "dotx" => SourceKind::Office(OfficeFormat::Docx),
+            "pptx" | "pptm" | "ppsx" | "potx" => SourceKind::Office(OfficeFormat::Pptx),
+            "xlsx" | "xlsm" | "xltx" => SourceKind::Office(OfficeFormat::Xlsx),
+            "odt" | "odp" | "ods" | "odg" | "ott" => SourceKind::Office(OfficeFormat::OpenDocument),
+            _ if TEXT_EXT.contains(&e) => SourceKind::Text,
+            _ if MARKUP_EXT.contains(&e) => SourceKind::Markup,
+            _ if IMAGE_EXT.contains(&e) => SourceKind::Image,
+            _ if AUDIO_EXT.contains(&e) => SourceKind::Audio,
+            _ => return None,
+        })
     }
     pub fn as_db_str(self) -> &'static str {
         match self {
             SourceKind::Markdown => "markdown",
             SourceKind::Text => "text",
+            SourceKind::Markup => "markup",
+            SourceKind::Rtf => "rtf",
+            SourceKind::Office(OfficeFormat::Docx) => "docx",
+            SourceKind::Office(OfficeFormat::Pptx) => "pptx",
+            SourceKind::Office(OfficeFormat::Xlsx) => "xlsx",
+            SourceKind::Office(OfficeFormat::OpenDocument) => "odf",
             SourceKind::Pdf => "pdf",
             SourceKind::Image => "image",
+            SourceKind::Audio => "audio",
         }
     }
     /// Size cap per kind; `text_cap` is the (configurable) text limit.
     pub fn max_bytes(self, text_cap: u64) -> u64 {
+        const MB: u64 = 1024 * 1024;
         match self {
-            SourceKind::Markdown | SourceKind::Text => text_cap,
-            SourceKind::Pdf => 64 * 1024 * 1024,
-            SourceKind::Image => 32 * 1024 * 1024,
+            SourceKind::Markdown | SourceKind::Text | SourceKind::Markup | SourceKind::Rtf => {
+                text_cap
+            }
+            SourceKind::Office(_) => 100 * MB,
+            SourceKind::Pdf => 200 * MB,
+            SourceKind::Image => 80 * MB,
+            SourceKind::Audio => 400 * MB,
         }
     }
 }
@@ -368,10 +516,17 @@ mod tests {
         assert!(r.complete);
         assert_eq!(
             names(&r),
-            ["a.md", "b.txt", "c.MD", "image.png", "report.PDF"]
+            [
+                "a.md",
+                "b.txt",
+                "c.MD",
+                "data.docx",
+                "image.png",
+                "report.PDF"
+            ]
         );
         assert_eq!(r.excluded_names, [".git", "Build", "node_modules"]);
-        assert_eq!(r.total_bytes, 10);
+        assert_eq!(r.total_bytes, 11);
     }
 
     #[test]
@@ -409,7 +564,7 @@ mod tests {
         );
         // a.md is 3 bytes → too large for the text cap; c.MD is denied;
         // image/PDF caps are separate.
-        assert_eq!(names(&r), ["b.txt", "image.png", "report.PDF"]);
+        assert_eq!(names(&r), ["b.txt", "data.docx", "image.png", "report.PDF"]);
         assert_eq!(r.skipped_large, 1);
     }
 
@@ -427,7 +582,14 @@ mod tests {
         let r = walk(&root, &[], Limits::default(), &AtomicBool::new(false));
         assert_eq!(
             names(&r),
-            ["a.md", "b.txt", "c.MD", "image.png", "report.PDF"]
+            [
+                "a.md",
+                "b.txt",
+                "c.MD",
+                "data.docx",
+                "image.png",
+                "report.PDF"
+            ]
         );
         assert_eq!(r.skipped_links, 3);
     }

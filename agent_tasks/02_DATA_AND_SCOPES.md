@@ -30,3 +30,9 @@ Code + automated tests + commands/results + platform/hardware/runtime versions +
 - **Tests:** 13 unit + 7 integration (`crates/core/tests/index.rs`): scan + delta rescan, Turkish FTS, line provenance, remove & purge leaves zero rows and source hashes unchanged, child-under-parent both choices, revoke during scan, purge resume + idempotence, stop-watching keeps index, cancel, generation switch.
 - **Update 2026-11-03:** PDFs (text per page via `pdf-extract`, isolated thread + 30 s limit + panic catch; scanned PDFs skipped as `pdf_no_text`) and images (`png/jpg/jpeg/bmp/gif`, raw bytes to the EG2 vision encoder; skipped if no mmproj) are indexed. Permanent skips are not retried on rescan.
 - **Not yet:** watching/idle sync (toggle disabled; ADR 016 manual default), editing exclusions, relink, OCR for scanned PDFs/screenshots, Office/code files, junction/OneDrive/long-path tests on real Windows, CPU/IO throttling.
+
+### Update — 2026-11-03 (all formats + OCR)
+- File kinds: text/code (~150 extensions), markup (html/xml/svg), RTF, DOCX/PPTX/XLSX, ODT/ODP/ODS, PDF, images (portable: png/jpg/gif/bmp/ico/tiff/webp/pnm/tga/dds/hdr/exr/qoi; OS codecs: heic/heif/avif/jxr/RAW), audio (wav/mp3/m4a/aac/flac/ogg/aiff/caf/mka). `crates/core/src/index/media.rs` + `crates/platform/src/media.rs` (Windows OCR/WIC/PDF render).
+- Images: vision vector + OCR text chunks (`modality='ocr'`). PDFs: text layer + OCR of scanned pages. Audio: 30 s segments (`modality='audio'`, time range).
+- Migration 002: chunks rebuilt (audio modality, time columns), contentless folded FTS; runner disables FKs during table rebuilds and verifies them.
+- Tests: format round-trips, OS fallback, audio decode/resample/segment, Office/HTML/RTF text, migration v1→v2 keeps vectors, full-pipeline scan with fake OS/embedder, skip reasons without OS services. Windows OCR/WIC/PDF code is compile-checked only by CI — **real Windows run PENDING (V07)**.

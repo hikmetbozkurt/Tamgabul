@@ -2,6 +2,7 @@
 
 pub mod extract;
 pub mod job;
+pub mod media;
 pub mod store;
 pub mod text;
 pub mod walk;

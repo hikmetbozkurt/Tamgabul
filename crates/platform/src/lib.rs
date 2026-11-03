@@ -94,6 +94,8 @@ impl TrayHost for PlaceholderTray {
     }
 }
 
+pub mod media;
+
 #[cfg(test)]
 mod tests {
     use super::*;

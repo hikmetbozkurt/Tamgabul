@@ -11,6 +11,7 @@ use tamgabul_core::db::open_and_migrate;
 use tamgabul_core::dto::RevokeMode;
 use tamgabul_core::error::IpcError;
 use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome};
+use tamgabul_core::index::media::{NoPlatform, Platform};
 use tamgabul_core::index::store::{self, GenerationSpec, Scope, ScopeState};
 use tamgabul_core::index::walk::{self, Limits};
 
@@ -46,13 +47,93 @@ impl Embedder for FakeEmbedder {
         self.texts += texts.len();
         Ok(texts.iter().map(|t| vec_for(t.as_bytes())).collect())
     }
-    fn supports_images(&mut self) -> bool {
+    fn supports_vision(&mut self) -> bool {
         true
     }
-    fn embed_image(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError> {
+    fn supports_audio(&mut self) -> bool {
+        true
+    }
+    fn embed_media(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError> {
         self.images += 1;
         Ok(vec_for(bytes))
     }
+}
+
+/// Test-only OS services: decodes "HEIC" to a PNG, renders PDF pages,
+/// and "reads" fixed text from any image.
+struct FakeOs;
+impl Platform for FakeOs {
+    fn decode_to_png(&self, _: &[u8], _: u32) -> Option<Vec<u8>> {
+        Some(png_bytes(24, 16))
+    }
+    fn ocr(&self, _: &[u8]) -> Option<Result<String, String>> {
+        Some(Ok("Fatura numarası 4521 ödeme bekliyor".into()))
+    }
+    fn ocr_available(&self) -> bool {
+        true
+    }
+    fn render_pdf_pages(&self, _: &[u8], pages: &[u32], _: u32) -> Option<Vec<(u32, Vec<u8>)>> {
+        Some(
+            pages
+                .iter()
+                .filter(|p| **p == 0)
+                .map(|p| (*p, png_bytes(30, 40)))
+                .collect(),
+        )
+    }
+}
+
+fn png_bytes(w: u32, h: u32) -> Vec<u8> {
+    let img =
+        image::RgbImage::from_fn(w, h, |x, y| image::Rgb([(x * 9) as u8, (y * 7) as u8, 200]));
+    let mut c = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut c, image::ImageFormat::Png)
+        .unwrap();
+    c.into_inner()
+}
+
+fn wav_tone(secs: u32) -> Vec<u8> {
+    let rate = 16_000u32;
+    let pcm: Vec<u8> = (0..rate * secs)
+        .flat_map(|i| (((i as f32 * 0.07).sin() * 9000.0) as i16).to_le_bytes())
+        .collect();
+    let mut w = b"RIFF".to_vec();
+    w.extend((36 + pcm.len() as u32).to_le_bytes());
+    w.extend(b"WAVEfmt ");
+    w.extend(16u32.to_le_bytes());
+    w.extend(1u16.to_le_bytes());
+    w.extend(1u16.to_le_bytes());
+    w.extend(rate.to_le_bytes());
+    w.extend((rate * 2).to_le_bytes());
+    w.extend(2u16.to_le_bytes());
+    w.extend(16u16.to_le_bytes());
+    w.extend(b"data");
+    w.extend((pcm.len() as u32).to_le_bytes());
+    w.extend(pcm);
+    w
+}
+
+fn docx(text: &str) -> Vec<u8> {
+    let mut c = std::io::Cursor::new(Vec::new());
+    {
+        let mut z = zip::ZipWriter::new(&mut c);
+        z.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        std::io::Write::write_all(
+            &mut z,
+            format!(
+                "<w:document><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        z.finish().unwrap();
+    }
+    c.into_inner()
 }
 
 fn vec_for(b: &[u8]) -> Vec<f32> {
@@ -143,14 +224,29 @@ fn env() -> Env {
     .unwrap();
     std::fs::write(p.join("projects/private/diary.md"), "private thoughts\n").unwrap();
     std::fs::write(p.join("node_modules/x/readme.md"), "dependency readme\n").unwrap();
-    std::fs::write(p.join("projects/picture.png"), [0x89, b'P', b'N', b'G']).unwrap();
+    std::fs::write(p.join("projects/picture.png"), png_bytes(20, 20)).unwrap();
+    std::fs::write(
+        p.join("projects/photo.heic"),
+        b"\x00\x00\x00\x18ftypheic fake",
+    )
+    .unwrap();
+    std::fs::write(p.join("projects/voice.wav"), wav_tone(35)).unwrap();
+    std::fs::write(
+        p.join("projects/legacy.doc"),
+        b"\xd0\xcf\x11\xe0 old binary word",
+    )
+    .unwrap();
     std::fs::write(
         p.join("projects/report.pdf"),
-        tiny_pdf("Quarterly budget review"),
+        tiny_pdf("Quarterly budget review for the infrastructure team and finance"),
     )
     .unwrap();
     std::fs::write(p.join("projects/scan.pdf"), tiny_pdf("")).unwrap();
-    std::fs::write(p.join("projects/table.docx"), "not indexed").unwrap();
+    std::fs::write(
+        p.join("projects/contract.docx"),
+        docx("Sözleşme taslağı imza bekliyor"),
+    )
+    .unwrap();
     Env {
         _db: db,
         files,
@@ -186,6 +282,7 @@ fn scan(e: &mut Env, scope: &Scope, emb: &mut FakeEmbedder) -> (Outcome, job::Pr
             deny: &[],
             limits: Limits::default(),
             batch: 8,
+            platform: &FakeOs,
         },
         emb,
         &AtomicBool::new(false),
@@ -229,35 +326,69 @@ fn hashes(root: &Path) -> HashMap<PathBuf, String> {
 }
 
 #[test]
-fn scan_indexes_text_with_vectors_and_rescans_only_changes() {
+fn scan_indexes_every_kind_with_vectors_and_rescans_only_changes() {
     let mut e = env();
     let before = hashes(e.files.path());
     let s = grant(&e, "projects");
     let mut emb = FakeEmbedder::new();
     let (out, p) = scan(&mut e, &s, &mut emb);
     assert_eq!(out, Outcome::Done);
-    assert_eq!(p.total, 6, "docx and node_modules are not candidates");
-    assert_eq!(p.indexed, 5);
-    assert_eq!(p.skipped, 1, "PDF without a text layer");
-    assert_eq!(emb.images, 1);
-    let q = |sql: &str| count(&e.conn, sql);
+    // md, txt, md, png, heic, wav, pdf, pdf, docx — not .doc, not node_modules.
+    assert_eq!(p.total, 9);
+    assert_eq!((p.indexed, p.skipped, p.errors), (9, 0, 0));
     assert_eq!(
-        q("SELECT COUNT(*) FROM documents WHERE parse_status='PARSED'"),
-        5
+        count(
+            &e.conn,
+            "SELECT COUNT(*) FROM documents WHERE parse_status='PARSED'"
+        ),
+        9
+    );
+    // Media: two images (PNG + OS-decoded HEIC) and two audio segments (30 s + 5 s).
+    assert_eq!(emb.images, 4);
+    assert_eq!(
+        count(
+            &e.conn,
+            "SELECT COUNT(*) FROM chunks WHERE modality='image' AND text IS NULL"
+        ),
+        2
     );
     assert_eq!(
-        q("SELECT COUNT(*) FROM documents WHERE parse_error='pdf_no_text'"),
+        count(&e.conn, "SELECT COUNT(*) FROM chunks WHERE modality='audio' AND time_start_ms IN (0, 30000) AND time_end_ms IN (30000, 35000)"),
+        2
+    );
+    // OCR: both images and the scanned PDF page.
+    assert_eq!(
+        count(&e.conn, "SELECT COUNT(*) FROM chunks WHERE modality='ocr'"),
+        3
+    );
+    assert_eq!(
+        count(
+            &e.conn,
+            "SELECT COUNT(*) FROM chunks WHERE modality='ocr' AND page = 1"
+        ),
         1
     );
+    assert_eq!(fts_hits(&e.conn, "fatura"), 3);
+    // Text layer of a normal PDF, a DOCX, and accent/case-insensitive words.
     assert_eq!(
-        q("SELECT COUNT(*) FROM chunks WHERE modality='image' AND text IS NULL"),
-        1
-    );
-    assert_eq!(
-        q("SELECT COUNT(*) FROM chunks WHERE page = 1 AND text LIKE '%Quarterly%'"),
+        count(
+            &e.conn,
+            "SELECT COUNT(*) FROM chunks WHERE page = 1 AND text LIKE '%Quarterly%'"
+        ),
         1
     );
     assert_eq!(fts_hits(&e.conn, "budget"), 1);
+    assert_eq!(
+        fts_hits(&e.conn, "sozlesme"),
+        1,
+        "docx text, typed without accents"
+    );
+    assert_eq!(
+        fts_hits(&e.conn, "toplanti"),
+        1,
+        "Toplantı found as toplanti"
+    );
+    assert_eq!(fts_hits(&e.conn, "countdown"), 1);
     assert_eq!(
         count(&e.conn, "SELECT COUNT(*) FROM chunks"),
         count(
@@ -265,8 +396,6 @@ fn scan_indexes_text_with_vectors_and_rescans_only_changes() {
             "SELECT COUNT(*) FROM embedding_records WHERE dimension = 768"
         )
     );
-    assert_eq!(fts_hits(&e.conn, "countdown"), 1);
-    assert_eq!(fts_hits(&e.conn, "Toplantı"), 1, "Turkish text searchable");
     let line: (i64, i64) = e
         .conn
         .query_row(
@@ -281,14 +410,14 @@ fn scan_indexes_text_with_vectors_and_rescans_only_changes() {
             .unwrap()
             .unwrap()
             .file_count,
-        5
+        9
     );
 
-    // Rescan without changes: nothing is embedded again.
-    let (calls, images) = (emb.calls, emb.images);
+    // Rescan without changes: nothing is read or embedded again.
+    let (calls, media) = (emb.calls, emb.images);
     let (_, p) = scan(&mut e, &s, &mut emb);
-    assert_eq!(p.unchanged, 6, "permanent skips are not retried");
-    assert_eq!((emb.calls, emb.images), (calls, images));
+    assert_eq!(p.unchanged, 9);
+    assert_eq!((emb.calls, emb.images), (calls, media));
 
     // Edit one file, delete another.
     std::fs::write(
@@ -306,7 +435,7 @@ fn scan_indexes_text_with_vectors_and_rescans_only_changes() {
             &e.conn,
             "SELECT COUNT(*) FROM documents WHERE parse_status='PARSED'"
         ),
-        4
+        8
     );
 
     // Source files never written by the indexer (edits above were ours).
@@ -317,6 +446,44 @@ fn scan_indexes_text_with_vectors_and_rescans_only_changes() {
         }
         assert_eq!(after.get(k), Some(v), "{k:?} changed");
     }
+}
+
+#[test]
+fn without_os_services_scans_and_heic_are_skipped_with_reasons() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    let generation = e.generation.clone();
+    let (_, p) = job::run(
+        &mut e.conn,
+        JobInput {
+            scope_id: &s.scope_id,
+            generation: &generation,
+            deny: &[],
+            limits: Limits::default(),
+            batch: 8,
+            platform: &NoPlatform,
+        },
+        &mut FakeEmbedder::new(),
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!((p.indexed, p.skipped), (7, 2));
+    let reasons: Vec<String> = {
+        let mut st = e
+            .conn
+            .prepare("SELECT parse_error FROM documents WHERE parse_status='SKIPPED' ORDER BY parse_error")
+            .unwrap();
+        st.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(reasons, ["pdf_no_text_no_ocr", "unsupported_codec"]);
+    assert_eq!(
+        count(&e.conn, "SELECT COUNT(*) FROM chunks WHERE modality='ocr'"),
+        0
+    );
 }
 
 #[test]
@@ -479,6 +646,7 @@ fn stop_watching_keeps_the_index_and_cancel_is_clean() {
             deny: &[],
             limits: Limits::default(),
             batch: 8,
+            platform: &NoPlatform,
         },
         &mut FakeEmbedder::new(),
         &AtomicBool::new(true),
@@ -564,6 +732,32 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
     let hits = search::search(&e.conn, Some(&g), Some(&q), "zzz", 10).unwrap();
     assert_eq!(title_of(&e.conn, &hits[0].document_id), "timer.md");
     assert_eq!(hits[0].reason, Reason::Semantic);
+
+    // An image vector ranks images first, in their own modality band, even
+    // though text↔text similarities would be higher.
+    let img: Vec<u8> = e
+        .conn
+        .query_row("SELECT e.vector FROM embedding_records e JOIN chunks c ON c.chunk_id = e.chunk_id WHERE c.modality = 'image' LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    let hits = search::search(
+        &e.conn,
+        Some(&g),
+        Some(&store::vector_from_bytes(&img)),
+        "zzz",
+        10,
+    )
+    .unwrap();
+    assert_eq!(hits[0].reason, Reason::Image);
+    // Words read by OCR find screenshots and the scanned PDF.
+    let hits = search::search(&e.conn, Some(&g), None, "fatura numarasi", 10).unwrap();
+    let names: Vec<String> = hits
+        .iter()
+        .map(|h| title_of(&e.conn, &h.document_id))
+        .collect();
+    for n in ["picture.png", "photo.heic", "scan.pdf"] {
+        assert!(names.contains(&n.to_string()), "{names:?}");
+    }
+    assert!(hits.iter().all(|h| h.reason == Reason::Ocr));
 
     // Words (PDF text) and file names (the image) without any vector.
     let hits = search::search(&e.conn, Some(&g), None, "budget review", 10).unwrap();

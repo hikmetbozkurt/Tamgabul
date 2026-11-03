@@ -119,7 +119,9 @@
   "file.markdown": "Markdown",
   "file.text": "Text",
   "file.pdf": "PDF",
+  "file.document": "Document",
   "file.image": "Image",
+  "file.audio": "Audio",
   "file.other": "File",
 
   "match.previous_result": "Shown before",
@@ -127,6 +129,7 @@
   "match.keyword": "Word match",
   "match.filename": "File name",
   "match.image": "Image match",
+  "match.audio": "Sound match",
   "match.ocr": "Text in image",
 
   "preview.label": "Preview",
