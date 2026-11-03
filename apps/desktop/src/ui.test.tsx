@@ -87,3 +87,31 @@ describe("hotkey capture", () => {
     expect(comboFromEvent({ ...base, key: "j", altKey: true })).toBe("Alt+J");
   });
 });
+
+describe("understood line", () => {
+  it("shows filters, exclusions and LLM-added words", async () => {
+    const { I18nProvider } = await import("./i18n");
+    const { UnderstoodLine } = await import("./features/search/Thread");
+    render(
+      <I18nProvider lang="en">
+        <UnderstoodLine u={{ file_type: "pdf", date: "last_week", exclude: ["menu"], added_terms: ["invoice"], by_llm: true }} />
+      </I18nProvider>,
+    );
+    const line = screen.getByTestId("understood");
+    expect(line.textContent).toContain("PDF");
+    expect(line.textContent).toContain("Last week");
+    expect(line.textContent).toContain("without “menu”");
+    expect(line.textContent).toContain("also searched: invoice");
+  });
+
+  it("renders nothing when there is nothing to show", async () => {
+    const { I18nProvider } = await import("./i18n");
+    const { UnderstoodLine } = await import("./features/search/Thread");
+    const { container } = render(
+      <I18nProvider lang="en">
+        <UnderstoodLine u={{ file_type: "any", date: "any", exclude: [], added_terms: [], by_llm: false }} />
+      </I18nProvider>,
+    );
+    expect(container.textContent).toBe("");
+  });
+});

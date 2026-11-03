@@ -8,10 +8,11 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::dto::{HistorySession, HistoryTurn, SearchKind, TurnRole};
+use crate::dto::{Choice, HistorySession, HistoryTurn, SearchKind, TurnRole, Understood};
 use crate::error::{ErrorCode, IpcError};
 use crate::index::store::new_id;
 use crate::search::{self, Acl, Hit};
+use crate::understand::{Filters, Plan, PlanIntent, PriorTurn};
 
 fn err(e: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::Internal, format!("history: {e}"))
@@ -64,50 +65,71 @@ pub struct ShownResult<'a> {
     pub title: String,
 }
 
-/// Store one exchange: the user's text and the assistant answer with its
-/// result references. Returns the assistant turn id.
+/// The assistant side of one exchange.
+pub struct Answer<'a> {
+    pub kind: SearchKind,
+    pub results: &'a [ShownResult<'a>],
+    pub plan: &'a Plan,
+    pub choices: &'a [Choice],
+}
+
+/// Store one exchange: the user's text with the plan it was understood as,
+/// and the assistant answer with its result references. Returns the
+/// assistant turn id.
 pub fn record_search(
     conn: &mut Connection,
     session: &str,
     user_text: &str,
-    kind: SearchKind,
-    results: &[ShownResult<'_>],
+    answer: &Answer<'_>,
     generation: Option<&str>,
 ) -> Result<String, IpcError> {
+    let plan = answer.plan;
+    let results = answer.results;
     let tx = conn.transaction().map_err(err)?;
     let ord = next_ordinal(&tx, session)?;
     let user_turn = new_id("u", session);
+    let plan_json = serde_json::to_string(plan).map_err(err)?;
     tx.execute(
-        "INSERT INTO turns(turn_id, session_id, ordinal, role, input_mode, text, intent)
-         VALUES (?1, ?2, ?3, 'user', 'typed', ?4, 'search_current')",
-        params![user_turn, session, ord, user_text],
+        "INSERT INTO turns(turn_id, session_id, ordinal, role, input_mode, text, intent, slots_json)
+         VALUES (?1, ?2, ?3, 'user', 'typed', ?4, ?5, ?6)",
+        params![user_turn, session, ord, user_text, plan.intent.db_intent(), plan_json],
     )
     .map_err(err)?;
     let ai_turn = new_id("a", session);
     let reasons: Vec<&str> = results.iter().map(|r| r.hit.reason.as_str()).collect();
     let slots = serde_json::json!({
-        "kind": kind,
+        "kind": answer.kind,
         "count": results.len(),
         "reasons": reasons,
+        "question": plan.question,
+        "choices": answer.choices,
+        "understood": plan.understood(),
     });
     tx.execute(
         "INSERT INTO turns(turn_id, session_id, ordinal, role, intent, slots_json)
-         VALUES (?1, ?2, ?3, 'assistant', 'search_current', ?4)",
-        params![ai_turn, session, ord + 1, slots.to_string()],
+         VALUES (?1, ?2, ?3, 'assistant', ?4, ?5)",
+        params![
+            ai_turn,
+            session,
+            ord + 1,
+            plan.intent.db_intent(),
+            slots.to_string()
+        ],
     )
     .map_err(err)?;
     let event = new_id("e", session);
+    let event_type = if answer.kind == SearchKind::Clarify {
+        "clarified"
+    } else if results.is_empty() {
+        "search_failed"
+    } else {
+        "results_shown"
+    };
+    let filters = serde_json::to_string(&plan.filters).map_err(err)?;
     tx.execute(
-        "INSERT INTO search_events(event_id, session_id, turn_id, event_type, query_terms, generation_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            event,
-            session,
-            ai_turn,
-            if results.is_empty() { "search_failed" } else { "results_shown" },
-            user_text,
-            generation
-        ],
+        "INSERT INTO search_events(event_id, session_id, turn_id, event_type, query_terms, filters_json, generation_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![event, session, ai_turn, event_type, user_text, filters, generation],
     )
     .map_err(err)?;
     for (rank, r) in results.iter().enumerate() {
@@ -127,13 +149,100 @@ pub fn record_search(
         )
         .map_err(err)?;
     }
-    tx.execute(
-        "UPDATE sessions SET last_active_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE session_id = ?1",
-        [session],
-    )
-    .map_err(err)?;
+    if answer.kind == SearchKind::Clarify {
+        tx.execute(
+            "UPDATE sessions SET last_active_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE session_id = ?1",
+            [session],
+        )
+        .map_err(err)?;
+    } else {
+        // Filters stay active for follow-ups ("sadece PDF'ler").
+        tx.execute(
+            "UPDATE sessions SET last_active_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                 active_slots_json = ?2 WHERE session_id = ?1",
+            params![session, filters],
+        )
+        .map_err(err)?;
+    }
     tx.commit().map_err(err)?;
     Ok(ai_turn)
+}
+
+/// What the next request in a session is read against.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionContext {
+    /// Earlier exchanges, oldest first (at most the last 3).
+    pub prior: Vec<PriorTurn>,
+    /// Filters of the last search.
+    pub active: Filters,
+    /// The last answer was a clarifying question.
+    pub last_was_clarify: bool,
+    /// The request that question was about.
+    pub last_user: Option<String>,
+}
+
+pub fn context(conn: &Connection, session: Option<&str>) -> Result<SessionContext, IpcError> {
+    let Some(session) = session else {
+        return Ok(SessionContext::default());
+    };
+    let active: Filters = conn
+        .query_row(
+            "SELECT active_slots_json FROM sessions WHERE session_id = ?1",
+            [session],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(err)?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut st = conn
+        .prepare(
+            "SELECT t.role, t.text, t.intent,
+                (SELECT event_id FROM search_events e WHERE e.turn_id = t.turn_id LIMIT 1)
+             FROM turns t WHERE t.session_id = ?1 ORDER BY t.ordinal DESC LIMIT 6",
+        )
+        .map_err(err)?;
+    type Row = (String, Option<String>, Option<String>, Option<String>);
+    let mut rows: Vec<Row> = st
+        .query_map([session], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    rows.reverse();
+    let mut ctx = SessionContext {
+        active,
+        ..Default::default()
+    };
+    for (role, text, intent, event) in rows {
+        if role == "user" {
+            ctx.prior.push(PriorTurn {
+                user: text.clone().unwrap_or_default(),
+                shown: Vec::new(),
+            });
+            ctx.last_user = text;
+            ctx.last_was_clarify = false;
+            continue;
+        }
+        ctx.last_was_clarify = intent.as_deref() == Some(PlanIntent::Clarify.db_intent());
+        if let (Some(event), Some(last)) = (event, ctx.prior.last_mut()) {
+            // Titles only; revoked results are tombstoned and left out.
+            let mut st = conn
+                .prepare(
+                    "SELECT title_snapshot FROM result_interactions
+                     WHERE event_id = ?1 AND action = 'shown' AND is_tombstone = 0
+                       AND title_snapshot IS NOT NULL ORDER BY rank LIMIT 3",
+                )
+                .map_err(err)?;
+            last.shown = st
+                .query_map([event], |r| r.get(0))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?;
+        }
+    }
+    Ok(ctx)
 }
 
 /// Note that a shown result was opened (for "opened" badges and history).
@@ -191,10 +300,15 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
         .collect::<Result<_, _>>()
         .map_err(err)?;
     let mut out = Vec::new();
-    let mut last_query = String::new();
+    let mut terms: Vec<String> = Vec::new();
     for (id, role, at, text, slots, event) in rows {
         if role == "user" {
-            last_query = text.clone().unwrap_or_default();
+            // Highlight the words that were actually searched.
+            terms = slots
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Plan>(s).ok())
+                .map(|p| p.terms)
+                .unwrap_or_else(|| search::terms(text.as_deref().unwrap_or_default()));
             out.push(HistoryTurn {
                 turn_id: id,
                 role: TurnRole::User,
@@ -205,6 +319,8 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                 choices: Vec::new(),
                 results: Vec::new(),
                 opened: false,
+                question: None,
+                understood: None,
             });
             continue;
         }
@@ -220,7 +336,6 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                     .collect()
             })
             .unwrap_or_default();
-        let terms = search::terms(&last_query);
         let mut results = Vec::new();
         let mut opened = false;
         if let Some(event) = &event {
@@ -254,10 +369,18 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                 .map_err(err)?
                 != 0;
         }
-        let kind = if results.is_empty() {
+        let clarify = slots["kind"].as_str() == Some("clarify");
+        let kind = if clarify {
+            SearchKind::Clarify
+        } else if results.is_empty() {
             SearchKind::NotFound
         } else {
             SearchKind::Results
+        };
+        let choices: Vec<Choice> = if clarify {
+            serde_json::from_value(slots["choices"].clone()).unwrap_or_default()
+        } else {
+            Vec::new()
         };
         out.push(HistoryTurn {
             turn_id: id,
@@ -266,9 +389,13 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
             text: None,
             kind: Some(kind),
             count: Some(results.len() as u32),
-            choices: Vec::new(),
+            choices,
             results,
             opened,
+            question: slots["question"].as_str().map(str::to_owned),
+            understood: serde_json::from_value::<Option<Understood>>(slots["understood"].clone())
+                .ok()
+                .flatten(),
         });
     }
     Ok(out)

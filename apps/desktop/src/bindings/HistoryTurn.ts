@@ -3,9 +3,10 @@ import type { Choice } from "./Choice";
 import type { ResultCard } from "./ResultCard";
 import type { SearchKind } from "./SearchKind";
 import type { TurnRole } from "./TurnRole";
+import type { Understood } from "./Understood";
 
 export type HistoryTurn = { turn_id: string, role: TurnRole, at: string, text: string | null, 
 /**
  * For assistant turns: the response kind and count, rendered by the UI.
  */
-kind: SearchKind | null, count: number | null, choices: Array<Choice>, results: Array<ResultCard>, opened: boolean, };
+kind: SearchKind | null, count: number | null, choices: Array<Choice>, results: Array<ResultCard>, opened: boolean, question: string | null, understood: Understood | null, };

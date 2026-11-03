@@ -2,10 +2,16 @@
 import type { Choice } from "./Choice";
 import type { ResultCard } from "./ResultCard";
 import type { SearchKind } from "./SearchKind";
+import type { Understood } from "./Understood";
 
 export type SearchResponse = { session_id: string, turn_id: string, kind: SearchKind, count: number, choices: Array<Choice>, results: Array<ResultCard>, 
 /**
- * True when no LLM is loaded and template clarification was used.
+ * Clarifying question (kind = clarify), in the user's language.
+ */
+question: string | null, understood: Understood | null, 
+/**
+ * True when no LLM helped with this request (none registered, or
+ * it failed); rules-only understanding was used.
  */
 degraded_llm: boolean, 
 /**

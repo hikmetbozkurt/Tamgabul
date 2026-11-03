@@ -6,6 +6,14 @@
 - **Small local LLM (optional)**: interpret ambiguous language + normalize into strict intent JSON, choose follow-up slot, produce concise response grounded ONLY in retrieved records.
 - **Search layer**: retrieves actual file records, source ID/path/line and relevance; file opener rechecks authorization/existence.
 
+## Implementation (2026-11-03, ADR 021)
+- `crates/core/src/understand.rs`: rules (`rules`), LLM prompt (`llm_messages`), schema (`llm_schema`), strict parse (`parse_llm`), merge (`plan`). Rules win on dates, the LLM wins on file type ("resim dersi notları" is not an image search).
+- LLM output fields: `search_text`, `keywords` (≤8), `exclude` (≤4), `file_type`, `date`, `intent` (search/refine/clarify), `clarify_question`, `clarify_options` (≤4). This replaces the wider v1 intent schema for search planning; `open_result`/`model_control` stay deterministic UI actions.
+- Filters run after fusion with the ACL check (`search::DocFilter`); requests with only filters ("dünkü ekran görüntüleri") list newest first (`search::browse`).
+- One question at most: never two clarifications in a row; a picked option completes the earlier request.
+- Context sent to the LLM: last 3 requests, up to 3 shown titles each, active filters. No file text.
+- Answers show "Understood: …" (filters, rejected words, words the LLM added) so a wrong reading is visible.
+
 ## Intent vocabulary (initial)
 `search_current`, `lookup_prior_result`, `open_result`, `refine_search`, `list_sources`, `model_control`, `cancel_action`, `clarify`, `unknown`. Model control commands are proposed only; Rust owns confirmation/permissions. Never grant file scopes from freeform LLM output.
 

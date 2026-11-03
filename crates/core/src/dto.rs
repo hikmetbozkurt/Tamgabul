@@ -10,6 +10,7 @@ use ts_rs::TS;
 
 use crate::error::ErrorCode;
 use crate::model::{ModelCategory, ModelStatus, StatusTone};
+use crate::understand::{DateFilter, FileTypeFilter};
 
 macro_rules! ts_export {
     ($($item:item)*) => {
@@ -35,6 +36,20 @@ ts_export! {
         pub text: String,
         /// Set when the user picks a clarification choice instead of typing.
         pub choice_id: Option<String>,
+        /// Minutes east of UTC on the user's clock, for "today"/"last week".
+        #[serde(default)]
+        pub utc_offset_min: Option<i32>,
+    }
+
+    /// What the request was understood as, shown under the answer so the
+    /// user can see (and correct) filters and added words.
+    pub struct Understood {
+        pub file_type: FileTypeFilter,
+        pub date: DateFilter,
+        pub exclude: Vec<String>,
+        /// Words the LLM added (base forms, synonyms, translations).
+        pub added_terms: Vec<String>,
+        pub by_llm: bool,
     }
 
     pub struct Choice {
@@ -66,7 +81,11 @@ ts_export! {
         pub count: u32,
         pub choices: Vec<Choice>,
         pub results: Vec<ResultCard>,
-        /// True when no LLM is loaded and template clarification was used.
+        /// Clarifying question (kind = clarify), in the user's language.
+        pub question: Option<String>,
+        pub understood: Option<Understood>,
+        /// True when no LLM helped with this request (none registered, or
+        /// it failed); rules-only understanding was used.
         pub degraded_llm: bool,
         /// Folders searched, for the "not found" message.
         pub searched_scope_count: u32,
@@ -209,6 +228,8 @@ ts_export! {
         pub choices: Vec<Choice>,
         pub results: Vec<ResultCard>,
         pub opened: bool,
+        pub question: Option<String>,
+        pub understood: Option<Understood>,
     }
 }
 
@@ -240,6 +261,7 @@ mod tests {
     fn search_request_accepts_missing_session() {
         let r: SearchRequest =
             serde_json::from_str(r#"{"session_id":null,"text":"timer","choice_id":null}"#).unwrap();
+        assert_eq!(r.utc_offset_min, None);
         assert_eq!(r.text, "timer");
     }
 }

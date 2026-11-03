@@ -1,6 +1,6 @@
 # P3-01 Persistent Conversation and Optional Local LLM
 
-**Phase:** P3 • **Owner:** Retrieval/Dialog • **Status:** TODO • **Dependencies:** P2-01 (test-only fakes allowed in automated tests; no mock data in the product — ADR 018)
+**Phase:** P3 • **Owner:** Retrieval/Dialog • **Status:** IN PROGRESS — search-plan LLM, rules, filters, clarify, context carry-over done (2026-11-03, ADR 021); grounded summaries and prior-result lookup TODO • **Dependencies:** P2-01 (test-only fakes allowed in automated tests; no mock data in the product — ADR 018)
 
 ## Objective
 Persisted sessions, turns and episodic events in SQLite so "geçen bulmuştun" works after model unload and reboot. A deterministic router handles common cases; the optional Gemma E4B adapter only emits strict intent JSON and grounded, cited replies.

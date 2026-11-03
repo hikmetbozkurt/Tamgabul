@@ -4,4 +4,8 @@ export type SearchRequest = { session_id: string | null, text: string,
 /**
  * Set when the user picks a clarification choice instead of typing.
  */
-choice_id: string | null, };
+choice_id: string | null, 
+/**
+ * Minutes east of UTC on the user's clock, for "today"/"last week".
+ */
+utc_offset_min: number | null, };

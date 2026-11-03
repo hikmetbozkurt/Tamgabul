@@ -1,24 +1,26 @@
 //! Search, preview, open and history commands (P2/P3, docs/08, docs/13).
 //!
 //! Queries run on a separate SQLite connection so the UI never waits on a
-//! scan. The query is embedded with EmbeddingGemma 2 (started on demand,
-//! ADR 019); if the model can't run, word + file-name search still answers.
-//! Every result is re-authorized before it is shown or opened.
+//! scan. A request is first understood (rules, plus the optional small LLM:
+//! docs/08), then embedded with EmbeddingGemma 2 (both started on demand,
+//! ADR 019). If a model can't run, the rest still answers. Every result is
+//! re-authorized before it is shown or opened.
 
 use std::path::Path;
 use std::time::Duration;
 
 use tamgabul_core::db;
 use tamgabul_core::dto::{
-    HistorySession, HistoryTurn, ResultPreview, SearchKind, SearchRequest, SearchResponse,
+    Choice, HistorySession, HistoryTurn, ResultPreview, SearchKind, SearchRequest, SearchResponse,
 };
 use tamgabul_core::error::{ErrorCode, IpcError};
-use tamgabul_core::history::{self, ShownResult};
+use tamgabul_core::history::{self, Answer, ShownResult};
 use tamgabul_core::index::store;
 use tamgabul_core::model::{ModelCategory, ModelStatus};
-use tamgabul_core::registry;
-use tamgabul_core::search::{self, Acl};
-use tamgabul_runtime::client::Client;
+use tamgabul_core::registry::{self, ModelRecord};
+use tamgabul_core::search::{self, Acl, DocFilter};
+use tamgabul_core::understand::{self, PlanIntent};
+use tamgabul_runtime::client::{ChatMessage, Client};
 use tamgabul_runtime::eg2;
 use tauri::{AppHandle, Manager, State};
 
@@ -34,16 +36,19 @@ fn worker_conn(state: &AppState) -> Result<rusqlite::Connection, IpcError> {
     db::open_worker(state.db_path.as_deref().ok_or_else(no_db)?)
 }
 
-/// Query vector, or `None` when no usable embedding model is registered or
-/// it failed to start (search then uses words and file names only).
-fn embed_query(state: &AppState, conn: &rusqlite::Connection, text: &str) -> Option<Vec<f32>> {
-    let model = registry::active(conn)
+fn active_model(conn: &rusqlite::Connection, category: ModelCategory) -> Option<ModelRecord> {
+    registry::active(conn)
         .ok()?
         .into_iter()
-        .find(|m| m.category == ModelCategory::Embedding)
-        .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available)?;
+        .find(|m| m.category == category)
+        .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available)
+}
+
+/// Query vector, or `None` when the embedding model can't run (search then
+/// uses words and file names only).
+fn embed_query(state: &AppState, model: &ModelRecord, text: &str) -> Option<Vec<f32>> {
     if state.models.snapshot(&model.model_id).is_none() {
-        crate::models::attach(&state.models, &model);
+        crate::models::attach(&state.models, model);
     }
     let lease = state.models.acquire(&model.model_id).ok()?;
     let c = Client::new(lease.endpoint().clone(), Duration::from_secs(60));
@@ -56,6 +61,54 @@ fn embed_query(state: &AppState, conn: &rusqlite::Connection, text: &str) -> Opt
     }
     eg2::normalize(&mut v);
     Some(v)
+}
+
+/// The registered LLM, unless its last start failed: a broken runtime must
+/// not add a failed load to every search. "Retry" on the Models page clears
+/// that.
+fn usable_llm(state: &AppState, conn: &rusqlite::Connection) -> Option<ModelRecord> {
+    let m = active_model(conn, ModelCategory::Llm)?;
+    if !Path::new(&m.path).exists() {
+        return None;
+    }
+    match state.models.snapshot(&m.model_id) {
+        Some(s) if s.status == ModelStatus::Error => None,
+        Some(_) => Some(m),
+        None => {
+            crate::models::attach(&state.models, &m);
+            Some(m)
+        }
+    }
+}
+
+const LLM_TIMEOUT: Duration = Duration::from_secs(20);
+const LLM_MAX_TOKENS: u32 = 320;
+
+/// Search plan from the LLM; `None` on any failure (rules answer alone).
+fn llm_plan(
+    state: &AppState,
+    model: &ModelRecord,
+    text: &str,
+    ctx: &history::SessionContext,
+) -> Option<understand::LlmPlan> {
+    let lease = state.models.acquire(&model.model_id).ok()?;
+    let c = Client::new(lease.endpoint().clone(), LLM_TIMEOUT);
+    let (system, user) = understand::llm_messages(text, &ctx.prior, &ctx.active);
+    let v = c
+        .chat_json(
+            &[ChatMessage::system(system), ChatMessage::user(user)],
+            &understand::llm_schema(),
+            LLM_MAX_TOKENS,
+        )
+        .ok()?;
+    understand::parse_llm(&v).ok()
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, IpcError> {
@@ -76,20 +129,70 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
         .iter()
         .filter(|s| s.state.is_authorized())
         .count() as u32;
+    let ctx = history::context(&conn, req.session_id.as_deref())?;
 
-    let qv = if generation.is_some() && !acl.is_empty() {
-        embed_query(&state, &conn, &text)
+    // A picked clarification option completes the request it answered, and
+    // never triggers a second question in a row.
+    let picked = req
+        .choice_id
+        .as_deref()
+        .is_some_and(|c| c.starts_with("opt:"));
+    let query = match (&ctx.last_user, picked) {
+        (Some(prev), true) => format!("{prev} {text}"),
+        _ => text.clone(),
+    };
+    let allow_clarify = !picked && !ctx.last_was_clarify;
+
+    let searchable = !acl.is_empty();
+    let emb = generation
+        .as_ref()
+        .filter(|_| searchable)
+        .and_then(|_| active_model(&conn, ModelCategory::Embedding));
+    let llm = if searchable {
+        usable_llm(&state, &conn)
     } else {
         None
     };
-    let hits = search::search(
-        &conn,
-        generation.as_deref(),
-        qv.as_deref(),
-        &text,
-        RESULT_LIMIT,
-    )?;
-    let terms = search::terms(&text);
+
+    // The LLM plans while the embedding model warms up on the rules-only
+    // reading; most of the time the second embed below is not needed.
+    let rules_plan = understand::plan(&query, None, allow_clarify);
+    let (llm_out, mut qv) = std::thread::scope(|s| {
+        let h = llm
+            .as_ref()
+            .map(|m| s.spawn(|| llm_plan(&state, m, &query, &ctx)));
+        let v = emb
+            .as_ref()
+            .and_then(|m| embed_query(&state, m, &rules_plan.embed_text));
+        (h.and_then(|h| h.join().ok().flatten()), v)
+    });
+    let plan = match &llm_out {
+        Some(l) => understand::plan(&query, Some(l), allow_clarify),
+        None => rules_plan.clone(),
+    };
+    if plan.embed_text != rules_plan.embed_text {
+        if let Some(m) = &emb {
+            qv = embed_query(&state, m, &plan.embed_text).or(qv);
+        }
+    }
+
+    let offset = req.utc_offset_min.unwrap_or(0).clamp(-14 * 60, 14 * 60) as i64 * 60;
+    let filter = DocFilter::new(&plan.filters, now_unix(), offset);
+    let hits = if plan.intent == PlanIntent::Clarify || !searchable {
+        Vec::new()
+    } else if plan.is_browse() {
+        search::browse(&conn, &filter, RESULT_LIMIT)?
+    } else {
+        search::search_terms(
+            &conn,
+            generation.as_deref(),
+            qv.as_deref(),
+            &plan.terms,
+            &filter,
+            RESULT_LIMIT,
+        )?
+    };
+
     let mut cards = Vec::new();
     let mut shown = Vec::new();
     for h in &hits {
@@ -99,7 +202,7 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             &h.document_id,
             h.chunk_id,
             h.reason.as_str(),
-            &terms,
+            &plan.terms,
         )? {
             shown.push(ShownResult {
                 hit: h,
@@ -109,18 +212,34 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             cards.push(r.card);
         }
     }
-    let kind = if cards.is_empty() {
-        SearchKind::NotFound
+    let (kind, choices) = if plan.intent == PlanIntent::Clarify {
+        let choices: Vec<Choice> = plan
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| Choice {
+                id: format!("opt:{i}"),
+                label: o.clone(),
+                count: 0,
+            })
+            .collect();
+        (SearchKind::Clarify, choices)
+    } else if cards.is_empty() {
+        (SearchKind::NotFound, Vec::new())
     } else {
-        SearchKind::Results
+        (SearchKind::Results, Vec::new())
     };
     let session = history::ensure_session(&conn, req.session_id.as_deref(), history_on)?;
     let turn = history::record_search(
         &mut conn,
         &session,
         &text,
-        kind.clone(),
-        &shown,
+        &Answer {
+            kind: kind.clone(),
+            results: &shown,
+            plan: &plan,
+            choices: &choices,
+        },
         generation.as_deref(),
     )?;
     Ok(SearchResponse {
@@ -128,10 +247,11 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
         turn_id: turn,
         kind,
         count: cards.len() as u32,
-        choices: Vec::new(),
+        choices,
         results: cards,
-        // No LLM yet: answers come from retrieval only.
-        degraded_llm: true,
+        question: plan.question.clone(),
+        understood: plan.understood(),
+        degraded_llm: !plan.by_llm,
         searched_scope_count: scope_count,
     })
 }

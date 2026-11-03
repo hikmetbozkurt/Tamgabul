@@ -30,7 +30,13 @@ export function useSearch() {
       setPending(q);
       setError(null);
       try {
-        const r = await api.search({ session_id: sessionId, text: q, choice_id: choiceId });
+        const r = await api.search({
+          session_id: sessionId,
+          text: q,
+          choice_id: choiceId,
+          // Minutes east of UTC, so "today" and "last week" follow the user's clock.
+          utc_offset_min: -new Date().getTimezoneOffset(),
+        });
         setDegraded(r.degraded_llm);
         if (r.session_id !== sessionId) {
           currentSession.set(r.session_id);

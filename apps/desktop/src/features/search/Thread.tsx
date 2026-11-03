@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { HistoryTurn } from "../../bindings/HistoryTurn";
 import type { IpcError } from "../../bindings/IpcError";
+import type { Understood } from "../../bindings/Understood";
 import { Icon } from "../../ui/icons";
 import { useI18n } from "../../i18n";
 import { clockTime, relativeTime } from "../../lib/format";
@@ -38,6 +39,26 @@ function UserMsg({ text, at }: { text: string; at?: string }) {
   );
 }
 
+/** What the request was read as: filters and words added by the LLM. */
+export function UnderstoodLine({ u }: { u: Understood | null }) {
+  const { t } = useI18n();
+  if (!u) return null;
+  const parts: string[] = [];
+  if (u.file_type !== "any") parts.push(t(`understood.type.${u.file_type}`));
+  if (u.date !== "any") parts.push(t(`understood.date.${u.date}`));
+  if (!parts.length && !u.exclude.length && !u.added_terms.length) return null;
+  return (
+    <div className="understood small muted" data-testid="understood">
+      <span>{t("understood.label")}</span>
+      {parts.map((p) => <span key={p} className="pill">{p}</span>)}
+      {u.exclude.map((w) => <span key={`x-${w}`} className="pill">{t("understood.without", { w })}</span>)}
+      {u.added_terms.length > 0 && (
+        <span title={u.by_llm ? t("understood.byLlm") : undefined}>{t("understood.also", { words: u.added_terms.join(", ") })}</span>
+      )}
+    </div>
+  );
+}
+
 function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: boolean } & Omit<Props, "turns" | "pending" | "error">) {
   const { t, lang } = useI18n();
   const n = turn.count ?? 0;
@@ -49,7 +70,7 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
         <AiAvatar />
         <div className="ai-col">
           <div className="bubble-ai">
-            <div className="lead">{t("search.clarify", { n, projects })}</div>
+            <div className="lead">{turn.question ?? t("search.clarify", { n, projects })}</div>
             <div className="choices" role="group" aria-label={t("search.choicesLabel")}>
               {turn.choices.map((c, i) => (
                 <button
@@ -60,7 +81,7 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
                   onClick={() => p.onChoice(c.id, c.id === "all" ? t("search.showAll") : c.label)}
                 >
                   {c.id === "all" ? t("search.showAll") : c.label}
-                  {c.id !== "all" && <span className="count">· {c.count}</span>}
+                  {c.id !== "all" && c.count > 0 && <span className="count">· {c.count}</span>}
                   {isLast && <span className="chip-key" aria-hidden="true">{i + 1}</span>}
                 </button>
               ))}
@@ -80,6 +101,7 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
             <div className="lead">
               <strong>{t("search.notFound")}</strong> <span className="muted">{t("search.notFoundWhy")}</span>
             </div>
+            <UnderstoodLine u={turn.understood} />
             {isLast && (
               <div className="choices">
                 <button type="button" className="chip" onClick={() => p.onSuggest("filenames")}>{t("search.tryFilenames")}</button>
@@ -108,6 +130,7 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
               )}
             </div>
             <div className="sub">{t("search.bestMatches", { n: turn.results.length })}</div>
+            <UnderstoodLine u={turn.understood} />
           </div>
         </div>
         {turn.results.map((r) => (

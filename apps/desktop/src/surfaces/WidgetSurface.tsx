@@ -66,7 +66,7 @@ export function WidgetSurface() {
       if (last.kind === "clarify") {
         return (
           <div className="w-bubble">
-            <span>{t("search.clarifyShort")}</span>
+            <span>{last.question ?? t("search.clarifyShort")}</span>
             <div className="choices" style={{ gap: 8 }}>
               {last.choices.map((c) => (
                 <button key={c.id} type="button" className="chip chip-choice" onClick={() => s.submit(c.id === "all" ? t("search.showAll") : c.label, c.id)}>

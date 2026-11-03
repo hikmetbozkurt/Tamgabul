@@ -143,6 +143,83 @@ impl Client {
     }
 }
 
+/// One chat message for [`Client::chat_json`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMessage {
+    pub role: &'static str,
+    pub content: String,
+}
+
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system",
+            content: content.into(),
+        }
+    }
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user",
+            content: content.into(),
+        }
+    }
+}
+
+impl Client {
+    /// Chat completion whose output is constrained by `schema` (llama-server
+    /// turns the JSON Schema into a grammar, so the model cannot produce
+    /// anything else). Greedy decoding, thinking off. Returns the parsed
+    /// object; the caller still validates every field.
+    pub fn chat_json(
+        &self,
+        messages: &[ChatMessage],
+        schema: &Value,
+        max_tokens: u32,
+    ) -> Result<Value, RuntimeError> {
+        let msgs: Vec<Value> = messages
+            .iter()
+            .map(|m| json!({ "role": m.role, "content": m.content }))
+            .collect();
+        let v: Value = self
+            .agent
+            .post(&self.url("/v1/chat/completions"))
+            .set("Authorization", &self.auth())
+            .send_json(json!({
+                "messages": msgs,
+                "temperature": 0.0,
+                "top_k": 1,
+                "max_tokens": max_tokens,
+                "cache_prompt": true,
+                "chat_template_kwargs": { "enable_thinking": false },
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": { "name": "plan", "strict": true, "schema": schema }
+                }
+            }))
+            .map_err(Self::map_err)?
+            .into_json()
+            .map_err(|e| RuntimeError::BadResponse(e.to_string()))?;
+        parse_chat_json(&v)
+    }
+}
+
+/// `choices[0].message.content` parsed as a JSON object.
+pub fn parse_chat_json(v: &Value) -> Result<Value, RuntimeError> {
+    let choice = &v["choices"][0];
+    if choice["finish_reason"].as_str() == Some("length") {
+        return Err(RuntimeError::BadResponse("output cut off".into()));
+    }
+    let content = choice["message"]["content"]
+        .as_str()
+        .ok_or_else(|| RuntimeError::BadResponse("missing message content".into()))?;
+    let out: Value = serde_json::from_str(content.trim())
+        .map_err(|_| RuntimeError::BadResponse("output is not JSON".into()))?;
+    if !out.is_object() {
+        return Err(RuntimeError::BadResponse("output is not an object".into()));
+    }
+    Ok(out)
+}
+
 fn truncate(s: &str, n: usize) -> &str {
     match s.char_indices().nth(n) {
         Some((i, _)) => &s[..i],
@@ -258,6 +335,87 @@ mod tests {
             parse_native_embedding(&json!([{"embedding":[[1.0],[2.0]]}])),
             Err(RuntimeError::BadResponse(_))
         ));
+    }
+
+    /// One-shot HTTP stub: returns the raw request it received.
+    fn stub(reply: &'static str) -> (Endpoint, std::thread::JoinHandle<String>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut head = String::new();
+            let mut len = 0usize;
+            loop {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap();
+                }
+                head.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0u8; len];
+            r.read_exact(&mut body).unwrap();
+            let mut s = s;
+            write!(
+                s,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply.len(),
+                reply
+            )
+            .unwrap();
+            head + &String::from_utf8(body).unwrap()
+        });
+        (
+            Endpoint {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "tok".into(),
+            },
+            h,
+        )
+    }
+
+    #[test]
+    fn chat_json_sends_schema_greedy_and_token() {
+        let (ep, h) = stub(
+            r#"{"choices":[{"finish_reason":"stop","message":{"content":"{\"capital\":\"Ankara\"}"}}]}"#,
+        );
+        let c = Client::new(ep, Duration::from_secs(5));
+        let schema = json!({"type":"object","properties":{"capital":{"enum":["Ankara"]}}});
+        let v = c
+            .chat_json(
+                &[ChatMessage::system("s"), ChatMessage::user("u")],
+                &schema,
+                16,
+            )
+            .unwrap();
+        assert_eq!(v["capital"], "Ankara");
+        let req = h.join().unwrap();
+        assert!(req.starts_with("POST /v1/chat/completions"));
+        assert!(req.contains("Bearer tok"));
+        let body: Value = serde_json::from_str(&req[req.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        assert_eq!(body["temperature"], 0.0);
+        assert_eq!(body["max_tokens"], 16);
+        assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+        assert_eq!(body["messages"][1]["role"], "user");
+    }
+
+    #[test]
+    fn chat_output_must_be_a_complete_object() {
+        let ok = json!({"choices":[{"finish_reason":"stop","message":{"content":" {\"a\":1} "}}]});
+        assert_eq!(parse_chat_json(&ok).unwrap()["a"], 1);
+        let cut = json!({"choices":[{"finish_reason":"length","message":{"content":"{\"a\":"}}]});
+        assert!(parse_chat_json(&cut).is_err());
+        let prose = json!({"choices":[{"message":{"content":"Sure! here"}}]});
+        assert!(parse_chat_json(&prose).is_err());
+        let arr = json!({"choices":[{"message":{"content":"[1]"}}]});
+        assert!(parse_chat_json(&arr).is_err());
+        assert!(parse_chat_json(&json!({})).is_err());
     }
 
     #[test]

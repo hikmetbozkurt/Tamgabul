@@ -3,6 +3,7 @@
 //! - [`gguf`]: read-only GGUF header probe.
 //! - [`eg2`]: EmbeddingGemma 2 profile — file validation, task prompts,
 //!   normalization and Matryoshka truncation.
+//! - [`llm`]: small instruction LLM profile (search plans as strict JSON).
 //! - [`locate`]: find `llama-server` (explicit, bundled, PATH, winget).
 //! - [`process`] / [`worker`]: supervised workers on 127.0.0.1 with a
 //!   per-process token; they die with the app (Job Object on Windows).
@@ -16,6 +17,7 @@ pub mod client;
 pub mod eg2;
 pub mod error;
 pub mod gguf;
+pub mod llm;
 pub mod locate;
 pub mod manager;
 pub mod process;

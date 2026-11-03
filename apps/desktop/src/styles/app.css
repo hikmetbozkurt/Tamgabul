@@ -142,6 +142,8 @@
 .bubble-ai .lead { font-size: var(--fs-body); line-height: 1.5; }
 .bubble-ai .lead strong { font-weight: 700; }
 .bubble-ai .sub { font-size: 16px; line-height: 1.5; color: var(--muted); }
+.understood { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.understood .pill { height: 24px; padding: 0 10px; font-size: 13px; background: var(--chip); color: var(--ink); }
 .choices { display: flex; gap: 10px; flex-wrap: wrap; }
 .typing { display: flex; gap: 6px; padding: 18px 20px; background: var(--bubble-ai); border-radius: var(--r-panel); align-self: flex-start; }
 .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); animation: blink 1.2s infinite; }

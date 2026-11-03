@@ -16,6 +16,7 @@ use crate::error::{ErrorCode, IpcError};
 use crate::index::store::{self, Scope};
 use crate::index::text::fold;
 use crate::index::walk::is_within;
+use crate::understand::Filters;
 
 fn err(e: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::Internal, format!("search: {e}"))
@@ -35,6 +36,8 @@ pub enum Reason {
     Audio,
     /// Words found in text read from an image or scanned page.
     Ocr,
+    /// Listed by file type / date only.
+    Filter,
 }
 
 impl Reason {
@@ -46,6 +49,7 @@ impl Reason {
             Reason::Image => "image",
             Reason::Audio => "audio",
             Reason::Ocr => "ocr",
+            Reason::Filter => "filter",
         }
     }
 }
@@ -91,14 +95,84 @@ impl Acl {
     }
 }
 
-/// Words worth matching: trimmed of punctuation, 3+ characters (trigram FTS).
+/// Request words that say nothing about the content ("bul", "dosya",
+/// "the", "where"…). Compared after folding.
+const STOP_WORDS: &[&str] = &[
+    "bul",
+    "bulur",
+    "bulun",
+    "bulsana",
+    "bulabilir",
+    "dosya",
+    "dosyasi",
+    "dosyayi",
+    "dosyasini",
+    "dosyada",
+    "dosyalar",
+    "dosyalari",
+    "dosyalarini",
+    "olan",
+    "icin",
+    "bana",
+    "beni",
+    "benim",
+    "nerede",
+    "hangi",
+    "neydi",
+    "vardi",
+    "ile",
+    "gibi",
+    "ama",
+    "veya",
+    "bir",
+    "icinde",
+    "hakkinda",
+    "ilgili",
+    "goster",
+    "getir",
+    "misin",
+    "musun",
+    "lutfen",
+    "tane",
+    "seyi",
+    "sunu",
+    "bunu",
+    "onu",
+    "the",
+    "and",
+    "for",
+    "with",
+    "find",
+    "file",
+    "files",
+    "where",
+    "that",
+    "this",
+    "show",
+    "about",
+    "from",
+    "get",
+    "please",
+    "was",
+    "were",
+    "which",
+];
+
+/// Words worth matching: trimmed of punctuation, 3+ characters (trigram FTS),
+/// without request filler.
 pub fn terms(q: &str) -> Vec<String> {
-    let mut v: Vec<String> = q
+    let mut v: Vec<String> = Vec::new();
+    for w in q
         .split(|c: char| c.is_whitespace() || ",.;:!?()[]{}\"'`".contains(c))
-        .map(|w| w.trim().to_string())
+        .map(str::trim)
         .filter(|w| w.chars().count() >= 3)
-        .collect();
-    v.dedup();
+    {
+        let f = fold(w);
+        if STOP_WORDS.contains(&f.as_str()) || v.iter().any(|x| fold(x) == f) {
+            continue;
+        }
+        v.push(w.to_string());
+    }
     v.truncate(12);
     v
 }
@@ -121,12 +195,23 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-/// Top chunks by cosine (vectors are L2-normalized).
+/// Which kind of embedding a chunk has. Cosines between a text query and
+/// image or audio vectors sit on a different scale than text-to-text, so
+/// each group is banded against its own best match.
+fn vector_group(modality: &str) -> Reason {
+    match modality {
+        "image" => Reason::Image,
+        "audio" => Reason::Audio,
+        _ => Reason::Semantic,
+    }
+}
+
+/// Top chunks by cosine (vectors are L2-normalized), per modality group.
 fn vector_candidates(
     conn: &Connection,
     generation: &str,
     q: &[f32],
-) -> Result<Vec<(i64, String, f32, bool)>, IpcError> {
+) -> Result<Vec<(i64, String, f32, Reason)>, IpcError> {
     let mut st = conn
         .prepare(
             "SELECT e.chunk_id, c.document_id, e.vector, c.modality FROM embedding_records e
@@ -134,7 +219,7 @@ fn vector_candidates(
         )
         .map_err(err)?;
     let mut rows = st.query([generation]).map_err(err)?;
-    let mut top: Vec<(i64, String, f32, bool)> = Vec::new();
+    let mut all: Vec<(i64, String, f32, Reason)> = Vec::new();
     while let Some(r) = rows.next().map_err(err)? {
         let blob: Vec<u8> = r.get(2).map_err(err)?;
         let v = store::vector_from_bytes(&blob);
@@ -143,16 +228,24 @@ fn vector_candidates(
         }
         let s = dot(q, &v);
         let modality: String = r.get(3).map_err(err)?;
-        top.push((
+        all.push((
             r.get(0).map_err(err)?,
             r.get(1).map_err(err)?,
             s,
-            modality == "image",
+            vector_group(&modality),
         ));
     }
-    top.sort_by(|a, b| b.2.total_cmp(&a.2));
-    top.truncate(CANDIDATES);
-    Ok(top)
+    all.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let mut out = Vec::new();
+    for group in [Reason::Semantic, Reason::Image, Reason::Audio] {
+        out.extend(
+            all.iter()
+                .filter(|c| c.3 == group)
+                .take(CANDIDATES)
+                .cloned(),
+        );
+    }
+    Ok(out)
 }
 
 fn keyword_candidates(
@@ -211,6 +304,91 @@ fn filename_candidates(conn: &Connection, terms: &[String]) -> Result<Vec<String
     Ok(hits.into_iter().map(|(_, id)| id).collect())
 }
 
+/// Which documents may be returned, from the request's filters (docs/08
+/// slots). Applied after fusion, together with the authorization check.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocFilter {
+    /// Allowed `documents.file_type` values; `None` = all.
+    pub types: Option<&'static [&'static str]>,
+    /// `[from, to)` Unix seconds on the file's modification time.
+    pub window: Option<(i64, i64)>,
+    /// Folded words; a document whose name or matched text contains one
+    /// is dropped.
+    pub exclude: Vec<String>,
+}
+
+impl DocFilter {
+    pub fn new(f: &Filters, now: i64, utc_offset: i64) -> Self {
+        Self {
+            types: f.file_type.db_types(),
+            window: f.date.window(now, utc_offset),
+            exclude: f
+                .exclude
+                .iter()
+                .map(|w| fold(w.trim()))
+                .filter(|w| !w.is_empty())
+                .collect(),
+        }
+    }
+
+    /// Only images or only audio: rank those vectors on their own scale.
+    fn media_only(&self) -> bool {
+        matches!(self.types, Some(t) if t == ["image"] || t == ["audio"])
+    }
+
+    fn passes(
+        &self,
+        conn: &Connection,
+        path: &str,
+        file_type: &str,
+        mtime: &str,
+        chunk: Option<i64>,
+    ) -> bool {
+        if self.types.is_some_and(|t| !t.contains(&file_type)) {
+            return false;
+        }
+        if let Some((from, to)) = self.window {
+            let secs = mtime_secs(mtime);
+            if secs < from || secs >= to {
+                return false;
+            }
+        }
+        if !self.exclude.is_empty() {
+            let name = fold(
+                &Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
+            if self.exclude.iter().any(|w| name.contains(w.as_str())) {
+                return false;
+            }
+            let text: Option<String> = chunk.and_then(|c| {
+                conn.query_row("SELECT text FROM chunks WHERE chunk_id = ?1", [c], |r| {
+                    r.get(0)
+                })
+                .ok()
+                .flatten()
+            });
+            if let Some(t) = text {
+                let t = fold(&t);
+                if self.exclude.iter().any(|w| t.contains(w.as_str())) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// `secs.nanos` (as stored) → whole seconds.
+fn mtime_secs(m: &str) -> i64 {
+    m.split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
 /// Ranked documents for a query. `query_vec` is `None` when the embedding
 /// model is unavailable (word + file-name search still works).
 pub fn search(
@@ -220,11 +398,29 @@ pub fn search(
     text: &str,
     limit: usize,
 ) -> Result<Vec<Hit>, IpcError> {
+    search_terms(
+        conn,
+        generation,
+        query_vec,
+        &terms(text),
+        &DocFilter::default(),
+        limit,
+    )
+}
+
+/// [`search`] with explicit match words and a document filter.
+pub fn search_terms(
+    conn: &Connection,
+    generation: Option<&str>,
+    query_vec: Option<&[f32]>,
+    terms: &[String],
+    filter: &DocFilter,
+    limit: usize,
+) -> Result<Vec<Hit>, IpcError> {
     let acl = Acl::load(conn)?;
     if acl.is_empty() {
         return Ok(Vec::new());
     }
-    let terms = terms(text);
     // chunk → (fused score, best reason)
     let mut fused: HashMap<(String, Option<i64>), (f64, Reason)> = HashMap::new();
     let mut add = |doc: &str, chunk: Option<i64>, rank: usize, reason: Reason, weight: f64| {
@@ -240,26 +436,38 @@ pub fn search(
 
     if let (Some(g), Some(q)) = (generation, query_vec) {
         let vec = vector_candidates(conn, g, q)?;
-        if let Some(best) = vec.first().map(|v| v.2) {
-            for (rank, (chunk, doc, cos, image)) in vec.iter().enumerate() {
-                if *cos >= best - SEMANTIC_BAND {
-                    let r = if *image {
-                        Reason::Image
-                    } else {
-                        Reason::Semantic
-                    };
-                    add(doc, Some(*chunk), rank, r, 1.0);
+        if filter.media_only() {
+            // Text-to-image/audio cosines are lower than text-to-text: band
+            // each media group against its own best.
+            for group in [Reason::Image, Reason::Audio] {
+                let mut in_group = vec.iter().filter(|c| c.3 == group).peekable();
+                let Some(best) = in_group.peek().map(|c| c.2) else {
+                    continue;
+                };
+                for (rank, (chunk, doc, cos, r)) in in_group.enumerate() {
+                    if *cos >= best - SEMANTIC_BAND {
+                        add(doc, Some(*chunk), rank, *r, 1.0);
+                    }
+                }
+            }
+        } else {
+            let mut all: Vec<&(i64, String, f32, Reason)> = vec.iter().collect();
+            all.sort_by(|a, b| b.2.total_cmp(&a.2));
+            if let Some(best) = all.first().map(|v| v.2) {
+                for (rank, (chunk, doc, cos, r)) in all.into_iter().enumerate() {
+                    if *cos >= best - SEMANTIC_BAND {
+                        add(doc, Some(*chunk), rank, *r, 1.0);
+                    }
                 }
             }
         }
     }
     if let Some(g) = generation {
-        for (rank, (chunk, doc, reason)) in keyword_candidates(conn, g, &terms)?.iter().enumerate()
-        {
+        for (rank, (chunk, doc, reason)) in keyword_candidates(conn, g, terms)?.iter().enumerate() {
             add(doc, Some(*chunk), rank, *reason, 1.0);
         }
     }
-    for (rank, doc) in filename_candidates(conn, &terms)?.iter().enumerate() {
+    for (rank, doc) in filename_candidates(conn, terms)?.iter().enumerate() {
         add(doc, None, rank, Reason::Filename, 0.8);
     }
 
@@ -291,18 +499,59 @@ pub fn search(
             .then(a.document_id.cmp(&b.document_id))
     });
 
-    // Re-authorize every result by its current path.
+    // Re-authorize every result by its current path, then apply filters.
     let mut out = Vec::new();
     for h in hits {
-        let path: Option<String> = conn
-            .query_row(
-                "SELECT canonical_path FROM documents WHERE document_id = ?1",
-                [&h.document_id],
-                |r| r.get(0),
-            )
-            .ok();
-        if path.is_some_and(|p| acl.allows(Path::new(&p))) {
+        let Some((path, ft, mtime)) = doc_row(conn, &h.document_id) else {
+            continue;
+        };
+        if acl.allows(Path::new(&path)) && filter.passes(conn, &path, &ft, &mtime, h.chunk_id) {
             out.push(h);
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn doc_row(conn: &Connection, doc: &str) -> Option<(String, String, String)> {
+    conn.query_row(
+        "SELECT canonical_path, file_type, mtime FROM documents WHERE document_id = ?1",
+        [doc],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .ok()
+}
+
+/// Filter-only listing, newest first ("dünkü ekran görüntüleri", "bu
+/// haftaki PDF'ler"): used when a request has no words to match.
+pub fn browse(conn: &Connection, filter: &DocFilter, limit: usize) -> Result<Vec<Hit>, IpcError> {
+    let acl = Acl::load(conn)?;
+    if acl.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut st = conn
+        .prepare(
+            "SELECT document_id, canonical_path, file_type, mtime FROM documents
+             WHERE parse_status = 'PARSED'",
+        )
+        .map_err(err)?;
+    let mut rows: Vec<(String, String, String, String)> = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    rows.sort_by(|a, b| mtime_secs(&b.3).cmp(&mtime_secs(&a.3)).then(a.0.cmp(&b.0)));
+    let mut out = Vec::new();
+    for (doc, path, ft, mtime) in rows {
+        if acl.allows(Path::new(&path)) && filter.passes(conn, &path, &ft, &mtime, None) {
+            out.push(Hit {
+                document_id: doc,
+                chunk_id: None,
+                score: 0.0,
+                reason: Reason::Filter,
+            });
             if out.len() >= limit {
                 break;
             }
@@ -529,10 +778,9 @@ mod tests {
 
     #[test]
     fn terms_and_fts_query() {
-        assert_eq!(
-            terms("the auction, timer?  ab"),
-            ["the", "auction", "timer"]
-        );
+        assert_eq!(terms("the auction, timer?  ab"), ["auction", "timer"]);
+        assert_eq!(terms("Toplantı dosyasını bul toplanti"), ["Toplantı"]);
+        assert_eq!(terms("timer dosyası nerede"), ["timer"]);
         assert_eq!(fts_query(&["a\"b".into()]).unwrap(), "\"a\"\"b\"");
         assert!(fts_query(&[]).is_none());
     }

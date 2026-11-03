@@ -1,6 +1,6 @@
 # P0-02 LLM and Embedding Runtime Feasibility
 
-**Phase:** P0 • **Owner:** Runtime • **Status:** EMBEDDING DONE (Windows run 2026-11-03) · LLM part TODO • **Dependencies:** 00 optional; can parallelize
+**Phase:** P0 • **Owner:** Runtime • **Status:** EMBEDDING DONE (Windows run 2026-11-03) · LLM part CODE DONE, Windows run PENDING • **Dependencies:** 00 optional; can parallelize
 
 ## Objective
 Prove the existing Gemma 4 E4B Q4_K_M runs without LM Studio and EmbeddingGemma 2 produces correct local vectors (text+image) through an app-managed worker prototype.
@@ -26,7 +26,7 @@ Code + automated tests + commands/results + platform/hardware/runtime versions +
 ### Progress report — 2026-11-02
 - **Done:** `crates/runtime` — GGUF header probe, EG2 profile (file pair by header, 768d check, encoder check, pinned SHA-256, model-card prompts, Matryoshka), `llama-server` locator (explicit / env / bundled / PATH / winget), supervised worker (127.0.0.1, random port, per-process token, health wait, startup timeout, cancel, Job Object / PDEATHSIG, log tail), HTTP client (text + image/audio embeddings), lifecycle manager (on-demand load, shared in-flight load, leases, idle TTL default 5 min, unload-after-job, keep-loaded opt-in, deferred unload when busy, epochs against stale READY, crash detection, shutdown). App: manager in `AppState`, tray "Unload Models" and Quit stop workers, `model_status` event.
 - **Evidence:** `cargo test -p tamgabul-runtime` (24 unit + 16 lifecycle + 5 real-process tests, test-only stand-in server), clippy clean. Header probe run against the real BF16 files: 768d, BF16, vision + audio encoders present.
-- **PENDING (Windows):** `cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\models\embeddinggemma-2` → text/image/audio vectors, unload and idle unload with OS process + VRAM check. LLM (Gemma 4 E4B) part not started.
+- **PENDING (Windows):** `cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\models\embeddinggemma-2` → text/image/audio vectors, unload and idle unload with OS process + VRAM check. LLM: Gemma 4 E2B-it Q4_0 chosen (ADR 021). Code done (`llm.rs` probe/pins, `LlamaServerConfig::chat`, `Client::chat_json`, `smoke::llm_smoke`). **PENDING (Windows):** `cargo run -p tamgabul-runtime --release --example llm_spike -- --model C:\AI\models\gemma-4-e2b-it`.
 - **Unknowns:** whether the user's winget llama.cpp build is new enough for `gemma-embedding2` (needs ≥ commit 914f7f8); GPU backend of that build; macOS has no kernel tie between app and worker.
 
 ### Windows run — 2026-11-03 (EmbeddingGemma 2)

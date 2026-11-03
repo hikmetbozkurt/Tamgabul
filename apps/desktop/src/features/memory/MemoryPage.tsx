@@ -149,7 +149,7 @@ export function MemoryPage() {
                             {turn.kind === "clarify" ? t("memory.clarified") : turn.kind === "not_found" ? t("memory.notFound") : t("memory.shown")}
                           </div>
                           {turn.kind === "clarify" && (
-                            <div className="what">{t("search.clarify", { n: turn.count ?? 0, projects: turn.choices.length - 1 })}</div>
+                            <div className="what">{turn.question ?? t("search.clarify", { n: turn.count ?? 0, projects: turn.choices.length - 1 })}</div>
                           )}
                           {turn.kind === "not_found" && <div className="what muted">{t("search.notFound")}</div>}
                           {turn.results.map((r) => (

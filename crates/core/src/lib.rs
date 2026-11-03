@@ -2,7 +2,7 @@
 //!
 //! Model status vocabulary, app health derivation, typed IPC DTOs, the SQLite
 //! migration harness and the model registry. The model runtime lives in
-//! `tamgabul-runtime`; indexing and retrieval arrive in later phases.
+//! `tamgabul-runtime`.
 
 pub mod db;
 pub mod dto;
@@ -15,6 +15,7 @@ pub mod model;
 pub mod registry;
 pub mod search;
 pub mod settings;
+pub mod understand;
 
 /// Version of the UI <-> Rust IPC contract (docs/13_API_CONTRACTS.md).
 /// Bump on any breaking change to a DTO in [`ipc`].

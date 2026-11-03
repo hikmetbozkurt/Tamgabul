@@ -48,9 +48,13 @@ pub struct LlamaServerConfig {
     pub mmproj: Option<PathBuf>,
     /// `--embeddings`: embedding-only server (EG2).
     pub embeddings: bool,
-    /// Context and batch size. EG2 is non-causal, so one input must fit in a
-    /// single ubatch; 8192 = the model's documented max sequence length.
+    /// Context size (tokens).
     pub ctx: u32,
+    /// Logical and physical batch size. EG2 is non-causal, so one input must
+    /// fit in a single ubatch (= ctx). `None` = llama.cpp defaults (chat).
+    pub batch: Option<u32>,
+    /// `--jinja`: format chat requests with the model's own template.
+    pub jinja: bool,
     pub gpu_layers: GpuLayers,
     pub threads: Option<u32>,
     pub startup_timeout: Duration,
@@ -64,11 +68,32 @@ impl LlamaServerConfig {
             model,
             mmproj,
             embeddings: true,
+            // The model's documented max sequence length.
             ctx: 8192,
+            batch: Some(8192),
+            jinja: false,
             gpu_layers: GpuLayers::Auto,
             threads: None,
             startup_timeout: Duration::from_secs(180),
             request_timeout: Duration::from_secs(120),
+        }
+    }
+
+    /// Small instruction model used only to turn a request into a search
+    /// plan (docs/08). Prompts are short, so a small context keeps memory low.
+    pub fn chat(exe: PathBuf, model: PathBuf) -> Self {
+        Self {
+            exe,
+            model,
+            mmproj: None,
+            embeddings: false,
+            ctx: 4096,
+            batch: None,
+            jinja: true,
+            gpu_layers: GpuLayers::Auto,
+            threads: None,
+            startup_timeout: Duration::from_secs(180),
+            request_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -86,14 +111,19 @@ pub fn llama_server_args(cfg: &LlamaServerConfig, port: u16, token: &str) -> Vec
         token.into(),
         "--ctx-size".into(),
         cfg.ctx.to_string().into(),
-        "--batch-size".into(),
-        cfg.ctx.to_string().into(),
-        "--ubatch-size".into(),
-        cfg.ctx.to_string().into(),
         "--parallel".into(),
         "1".into(),
         "--no-webui".into(),
     ];
+    if let Some(b) = cfg.batch {
+        a.push("--batch-size".into());
+        a.push(b.to_string().into());
+        a.push("--ubatch-size".into());
+        a.push(b.to_string().into());
+    }
+    if cfg.jinja {
+        a.push("--jinja".into());
+    }
     if let Some(mm) = &cfg.mmproj {
         a.push("--mmproj".into());
         a.push(mm.clone().into());
@@ -303,6 +333,20 @@ mod tests {
             .windows(2)
             .any(|w| w[0] == "--n-gpu-layers" && w[1] == "0"));
         assert!(!a.contains(&"--mmproj".to_string()));
+    }
+
+    #[test]
+    fn chat_worker_uses_template_and_default_batches() {
+        let c = LlamaServerConfig::chat("llama-server".into(), "llm.gguf".into());
+        let a = strs(&llama_server_args(&c, 9, "t"));
+        assert!(a.contains(&"--jinja".to_string()));
+        assert!(!a.contains(&"--embeddings".to_string()));
+        assert!(!a.contains(&"--ubatch-size".to_string()));
+        assert!(!a.contains(&"--mmproj".to_string()));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "--host" && w[1] == "127.0.0.1"));
+        assert!(a.windows(2).any(|w| w[0] == "--ctx-size" && w[1] == "4096"));
     }
 
     #[test]

@@ -41,7 +41,9 @@ pub trait ModelAdapter: Send + Sync {
 Separate interfaces for embedding batch vs generative LLM vs ASR vs speech synthesis preferred; trait above represents lifecycle only, inference payloads are category-specific.
 
 ## Structured LLM output
-`examples/intent-output.schema.json` is the strict JSON Schema. `file_id` from model **cannot authorize file open**; LLM can only propose known `result_ref` resolved server-side. Unknown action/enum/extra field rejected. Response generation uses source evidence IDs to avoid false claims.
+`search(req)` takes `utc_offset_min` (user's clock, for date filters) and answers with `question` (clarify) and `understood` (filters + LLM-added words); history turns carry the same fields.
+
+Search planning uses `understand::llm_schema()` (ADR 021, docs/08 "Implementation"); `examples/intent-output.schema.json` remains the wider dialogue design. `file_id` from model **cannot authorize file open**; LLM can only propose known `result_ref` resolved server-side. Unknown action/enum/extra field rejected. Response generation uses source evidence IDs to avoid false claims.
 
 ## Error taxonomy
 `MODEL_MISSING`, `MODEL_INCOMPATIBLE`, `RUNTIME_LOAD_FAILED`, `INFERENCE_TIMEOUT`, `EMBEDDING_GENERATION_STALE`, `SCOPE_NOT_AUTHORIZED`, `SCOPE_REVOKED`, `SOURCE_CHANGED`, `INDEX_UNAVAILABLE`, `MIC_PERMISSION_DENIED`, `DB_MIGRATION_FAILED`, `USER_CANCELLED`. Messages localized; avoid raw file paths in default logs.

@@ -30,8 +30,12 @@ Checked from the published files and the llama.cpp source, then confirmed on Win
 - **Documents:** DOCX/PPTX/XLSX and ODT/ODP/ODS from their XML parts; RTF and HTML/XML/SVG stripped; ~150 text/code extensions as plain text. Legacy binary `.doc/.xls/.ppt` are not read.
 - **Word search:** contentless FTS5 trigram over `tg_fold(text)` (lower case, Turkish I/İ/ı → i, accents removed); query terms are folded the same way; highlights map back to the original spelling.
 
+## Search-plan LLM (2026-11-03)
+- Model: `gemma-4-E2B-it-Q4_0.gguf` from `ggml-org/gemma-4-E2B-it-GGUF`, 2,841,481,184 bytes, SHA-256 `8e30dff3…6a52` (Hub LFS, verified on the user's copy). GGUF header: `gemma4`, size label 4.6B, context 131072, Apache-2.0, chat template with `enable_thinking` (default off).
+- Not yet measured: load time, RAM/VRAM, plan latency and plan quality on Windows. Run `cargo run -p tamgabul-runtime --release --example llm_spike -- --model C:\AI\models\gemma-4-e2b-it` and record the output under V01. No numbers are claimed before that.
+
 ## Open verification tickets
-- V01: Pin Windows llama.cpp binary and run local E4B Q4_K_M load, JSON output, unload and RSS/VRAM check.
+- V01: Run `llm_spike` with Gemma 4 E2B-it Q4_0 on Windows: load, JSON plans for the built-in TR/EN cases, unload, RSS/VRAM check. (E4B Q4_K_M kept as a larger fallback.)
 - V02: Pin EG2 checkpoint/version, text+image encoding correct vectors, user-selected local checkpoint, CPU/GPU and runtime packaging with minimal stack. **DONE 2026-11-03 on Windows** with llama.cpp build 12024 (`ddf48f85c`): text, image and audio embeddings 768d and sane; unload and idle unload end the process. Details in agent_tasks/01.
 - V03: Pinned sqlite-vec and FTS5 builds on Win/mac; fallback strategy.
 - V04: Chosen STT/TTS implementations, exact model versions/licenses, Windows/mac binary packaging and voice metrics. Do not assume previously named TTS licenses/performance without checking each release artifact.

@@ -5,7 +5,9 @@
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use crate::client::Client;
+use serde_json::json;
+
+use crate::client::{ChatMessage, Client};
 use crate::eg2::{self, Task};
 use crate::error::RuntimeError;
 use crate::worker::{LlamaServerConfig, ProcessLauncher, Worker};
@@ -60,6 +62,54 @@ pub fn eg2_smoke(cfg: LlamaServerConfig, cancel: &AtomicBool) -> Result<SmokeRep
         })
     })();
     // Always stop the private worker, success or not.
+    worker.terminate()?;
+    result
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmSmokeReport {
+    pub cold_load: Duration,
+    /// One constrained answer, prompt + generation.
+    pub answer: Duration,
+}
+
+/// LLM smoke: start a private worker, ask one question whose answer is
+/// fixed by a JSON schema, check the model picked the right enum value,
+/// stop the worker. Proves the runtime supports the architecture, the chat
+/// template works and grammar-constrained output works.
+pub fn llm_smoke(
+    cfg: LlamaServerConfig,
+    cancel: &AtomicBool,
+) -> Result<LlmSmokeReport, RuntimeError> {
+    let launcher = ProcessLauncher::llama_server(cfg);
+    let t = Instant::now();
+    let worker = launcher.launch_process(cancel)?;
+    let cold_load = t.elapsed();
+    let result = (|| {
+        let c = Client::new(worker.endpoint().clone(), launcher.request_timeout());
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capital"],
+            "properties": { "capital": { "enum": ["Istanbul", "Ankara", "Izmir"] } }
+        });
+        let t = Instant::now();
+        let v = c.chat_json(
+            &[
+                ChatMessage::system("Answer with JSON only."),
+                ChatMessage::user("Türkiye'nin başkenti hangi şehirdir?"),
+            ],
+            &schema,
+            32,
+        )?;
+        let answer = t.elapsed();
+        if v["capital"] != "Ankara" {
+            return Err(RuntimeError::BadResponse(
+                "model gave a wrong answer to a fixed question".into(),
+            ));
+        }
+        Ok(LlmSmokeReport { cold_load, answer })
+    })();
     worker.terminate()?;
     result
 }

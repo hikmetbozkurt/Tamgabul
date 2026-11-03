@@ -17,7 +17,7 @@ use tamgabul_core::health::{derive_health, AppHealth, HealthInputs, ModelSummary
 use tamgabul_core::model::{ModelCategory, ModelStatus};
 use tamgabul_core::registry::{self, ModelRecord};
 use tamgabul_runtime::worker::{Launcher, LlamaServerConfig, ProcessLauncher, Worker};
-use tamgabul_runtime::{eg2, locate, smoke, ModelManager, Policy, RuntimeError};
+use tamgabul_runtime::{eg2, llm, locate, smoke, ModelManager, Policy, RuntimeError};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
@@ -93,16 +93,36 @@ impl Launcher for Eg2Launcher {
     }
 }
 
-pub(crate) fn attach(mgr: &ModelManager, rec: &ModelRecord) {
-    if rec.category == ModelCategory::Embedding {
-        mgr.register(
-            &rec.model_id,
-            Arc::new(Eg2Launcher {
-                path: PathBuf::from(&rec.path),
-            }),
-            policy(&rec.ttl),
-        );
+/// Starts the search-plan LLM worker (text only, small context).
+struct LlmLauncher {
+    path: PathBuf,
+}
+
+impl Launcher for LlmLauncher {
+    fn launch(&self, cancel: &AtomicBool) -> Result<Arc<dyn Worker>, RuntimeError> {
+        let model = llm::locate(&self.path)?;
+        let exe = locate::find_llama_server(None)?.path;
+        let cfg = LlamaServerConfig::chat(exe, model);
+        Ok(Arc::new(
+            ProcessLauncher::llama_server(cfg).launch_process(cancel)?,
+        ))
     }
+}
+
+/// Make a registered model known to the manager (nothing starts).
+pub(crate) fn attach(mgr: &ModelManager, rec: &ModelRecord) {
+    let path = PathBuf::from(&rec.path);
+    let launcher: Arc<dyn Launcher> = match rec.category {
+        ModelCategory::Embedding => Arc::new(Eg2Launcher { path }),
+        ModelCategory::Llm => Arc::new(LlmLauncher { path }),
+        ModelCategory::Stt | ModelCategory::Tts => return,
+    };
+    mgr.register(&rec.model_id, launcher, policy(&rec.ttl));
+}
+
+/// Model categories that can run in this build.
+fn runnable(c: ModelCategory) -> bool {
+    matches!(c, ModelCategory::Embedding | ModelCategory::Llm)
 }
 
 /// App start: make the active models known to the manager. Nothing loads.
@@ -405,6 +425,125 @@ fn validate_embedding(
     }))
 }
 
+fn validate_llm(
+    path: &str,
+    steps: &mut Steps,
+    cancel: &AtomicBool,
+) -> Result<Option<ModelRecord>, IpcError> {
+    // 1. readable
+    steps.run("readable");
+    let p = PathBuf::from(path);
+    if !p.exists() {
+        steps.fail("readable", "addModel.fail.notFound")?;
+        return Ok(None);
+    }
+    steps.ok("readable", None);
+    cancelled(cancel)?;
+
+    // 2. format: GGUF instruction model with a chat template
+    steps.run("format");
+    let (model, probe) = match llm::locate(&p).and_then(|m| llm::probe(&m).map(|pr| (m, pr))) {
+        Ok(x) => x,
+        Err(_) => {
+            steps.fail("format", "addModel.fail.format.llm")?;
+            return Ok(None);
+        }
+    };
+    steps.ok(
+        "format",
+        format!(
+            "{} · {} · {}",
+            probe.architecture,
+            probe.size_label.as_deref().unwrap_or("?"),
+            probe.precision
+        ),
+    );
+    cancelled(cancel)?;
+
+    // 3. checksum
+    steps.run("checksum");
+    let hash = match eg2::sha256_file(&model, |_, _| {}) {
+        Ok(h) => h,
+        Err(_) => {
+            steps.fail("checksum", "addModel.fail.readable.llm")?;
+            return Ok(None);
+        }
+    };
+    let pinned = llm::is_pinned(&hash);
+    steps.ok(
+        "checksum",
+        Some(
+            if pinned {
+                "addModel.detail.pinned"
+            } else {
+                "addModel.detail.unpinned"
+            }
+            .to_string(),
+        ),
+    );
+    cancelled(cancel)?;
+
+    // 4. runtime
+    steps.run("runtime");
+    let Ok(found) = locate::find_llama_server(None) else {
+        steps.fail("runtime", "addModel.fail.runtime")?;
+        return Ok(None);
+    };
+    let version = locate::version(&found.path).unwrap_or_else(|_| "unknown".into());
+    steps.ok("runtime", format!("llama.cpp {version}"));
+    cancelled(cancel)?;
+
+    // 5. smoke: one schema-constrained answer from a private worker
+    steps.run("smoke");
+    match smoke::llm_smoke(LlamaServerConfig::chat(found.path, model.clone()), cancel) {
+        Ok(r) => steps.ok(
+            "smoke",
+            format!(
+                "JSON ✓ · {:.1} s load · {:.1} s answer",
+                r.cold_load.as_secs_f64(),
+                r.answer.as_secs_f64()
+            ),
+        ),
+        Err(RuntimeError::Cancelled) => {
+            return Err(IpcError::new(ErrorCode::UserCancelled, "cancelled"))
+        }
+        Err(_) => {
+            steps.fail("smoke", "addModel.fail.smoke.llm")?;
+            return Ok(None);
+        }
+    }
+
+    let display = probe
+        .name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "LLM".into());
+    Ok(Some(ModelRecord {
+        model_id: new_model_id(),
+        category: ModelCategory::Llm,
+        display_name: display,
+        provider: Some(if pinned {
+            format!("{} · {}", llm::PINNED_REPO, probe.precision)
+        } else {
+            format!("GGUF · {}", probe.precision)
+        }),
+        path: path.to_string(),
+        format: "gguf".into(),
+        architecture: Some(probe.architecture.clone()),
+        weights_sha256: Some(hash),
+        model_revision: pinned.then(|| llm::PINNED_REPO.to_string()),
+        license_name: probe.license.clone(),
+        runtime_adapter: "llama.cpp".into(),
+        adapter_version: version,
+        capabilities: vec!["search_plan".into()],
+        embedding_dim: None,
+        status: ModelStatus::Available,
+        last_error_code: None,
+        validated_at: None,
+        ttl: TtlPolicy::Minutes5,
+    }))
+}
+
 fn run_validation(
     app: &AppHandle,
     req: RegisterModelRequest,
@@ -413,7 +552,7 @@ fn run_validation(
 ) -> Result<bool, IpcError> {
     let path = req.path.trim().to_string();
     let fmt_key = format!("addModel.step.format.{}", req.category.as_db_str());
-    if req.category != ModelCategory::Embedding {
+    if !runnable(req.category) {
         let mut steps = Steps::new(
             channel,
             &[
@@ -438,7 +577,11 @@ fn run_validation(
             ("smoke", "addModel.step.smoke"),
         ],
     );
-    let Some(record) = validate_embedding(&path, &mut steps, &cancel)? else {
+    let record = match req.category {
+        ModelCategory::Llm => validate_llm(&path, &mut steps, &cancel)?,
+        _ => validate_embedding(&path, &mut steps, &cancel)?,
+    };
+    let Some(record) = record else {
         return Ok(false);
     };
     let state = app.state::<AppState>();
@@ -553,7 +696,7 @@ pub async fn load_model(app: AppHandle, model_id: String) -> Result<(), IpcError
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let rec = record(&state, &model_id)?;
-        if rec.category != ModelCategory::Embedding {
+        if !runnable(rec.category) {
             return Err(IpcError::new(
                 ErrorCode::NotImplemented,
                 "model type arrives later",

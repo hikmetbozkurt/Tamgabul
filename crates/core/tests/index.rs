@@ -691,8 +691,9 @@ fn new_embedding_identity_starts_a_new_generation() {
 // ---------------------------------------------------------------- P2/P3
 
 use tamgabul_core::dto::SearchKind;
-use tamgabul_core::history::{self, ShownResult};
-use tamgabul_core::search::{self, Acl, Reason};
+use tamgabul_core::history::{self, Answer, ShownResult};
+use tamgabul_core::search::{self, Acl, DocFilter, Reason};
+use tamgabul_core::understand::{self, DateFilter, FileTypeFilter};
 
 fn chunk_vector(c: &Connection, like: &str) -> Vec<f32> {
     let b: Vec<u8> = c
@@ -793,12 +794,17 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
             title: title_of(&e.conn, &h.document_id),
         })
         .collect();
+    let plan = understand::plan("budget review", None, true);
     history::record_search(
         &mut e.conn,
         &session,
         "budget review",
-        SearchKind::Results,
-        &shown,
+        &Answer {
+            kind: SearchKind::Results,
+            results: &shown,
+            plan: &plan,
+            choices: &[],
+        },
         Some(&g),
     )
     .unwrap();
@@ -823,4 +829,194 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
 
     history::clear_all(&e.conn).unwrap();
     assert!(history::list_sessions(&e.conn).unwrap().is_empty());
+}
+
+fn names(e: &Env, hits: &[search::Hit]) -> Vec<String> {
+    let mut v: Vec<String> = hits
+        .iter()
+        .map(|h| title_of(&e.conn, &h.document_id))
+        .collect();
+    v.sort();
+    v
+}
+
+fn set_mtime(c: &Connection, name: &str, secs: i64) {
+    c.execute(
+        "UPDATE documents SET mtime = ?1 WHERE canonical_path LIKE ?2",
+        rusqlite::params![format!("{secs}.0"), format!("%{name}")],
+    )
+    .unwrap();
+}
+
+#[test]
+fn filters_narrow_search_and_browse_lists_by_type_and_date() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    let g = e.generation.clone();
+    let now = 1_793_700_000; // 2026-11-03 (UTC)
+    let day = 86_400;
+    set_mtime(&e.conn, "picture.png", now - 3600);
+    set_mtime(&e.conn, "photo.heic", now - 40 * day);
+    set_mtime(&e.conn, "scan.pdf", now - day);
+    set_mtime(&e.conn, "report.pdf", now - day);
+
+    // OCR words match two images and a PDF; a type filter keeps one kind.
+    let words = search::terms("fatura numarasi");
+    let images = understand::Filters {
+        file_type: FileTypeFilter::Image,
+        ..Default::default()
+    };
+    let hits = search::search_terms(
+        &e.conn,
+        Some(&g),
+        None,
+        &words,
+        &DocFilter::new(&images, now, 0),
+        10,
+    )
+    .unwrap();
+    assert_eq!(names(&e, &hits), ["photo.heic", "picture.png"]);
+
+    // …and a date window drops the old photo.
+    let today_images = understand::Filters {
+        file_type: FileTypeFilter::Image,
+        date: DateFilter::Today,
+        exclude: vec![],
+    };
+    let hits = search::search_terms(
+        &e.conn,
+        Some(&g),
+        None,
+        &words,
+        &DocFilter::new(&today_images, now, 0),
+        10,
+    )
+    .unwrap();
+    assert_eq!(names(&e, &hits), ["picture.png"]);
+
+    // Excluded words drop documents by name or matched text.
+    let no_scan = understand::Filters {
+        exclude: vec!["SCAN".into()],
+        ..Default::default()
+    };
+    let hits = search::search_terms(
+        &e.conn,
+        Some(&g),
+        None,
+        &words,
+        &DocFilter::new(&no_scan, now, 0),
+        10,
+    )
+    .unwrap();
+    assert!(!names(&e, &hits).contains(&"scan.pdf".to_string()));
+
+    // No words, only filters: newest first.
+    let p = understand::plan("dünkü pdf'ler", None, true);
+    assert!(p.is_browse());
+    let hits = search::browse(&e.conn, &DocFilter::new(&p.filters, now, 0), 10).unwrap();
+    assert_eq!(names(&e, &hits), ["report.pdf", "scan.pdf"]);
+    assert!(hits.iter().all(|h| h.reason == Reason::Filter));
+
+    // Revoked folders never list.
+    store::begin_revoke(&mut e.conn, &s.scope_id, RevokeMode::RemoveAndPurge, false).unwrap();
+    assert!(search::browse(&e.conn, &DocFilter::default(), 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn clarify_turns_and_context_are_kept_in_history() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    let g = e.generation.clone();
+    let session = history::ensure_session(&e.conn, None, true).unwrap();
+
+    // 1. A search with a PDF filter.
+    let p1 = understand::plan("bütçe pdf", None, true);
+    let hits = search::search(&e.conn, Some(&g), None, "budget", 10).unwrap();
+    let shown: Vec<ShownResult> = hits
+        .iter()
+        .map(|h| ShownResult {
+            hit: h,
+            scope_id: Some(s.scope_id.clone()),
+            title: title_of(&e.conn, &h.document_id),
+        })
+        .collect();
+    history::record_search(
+        &mut e.conn,
+        &session,
+        "bütçe pdf",
+        &Answer {
+            kind: SearchKind::Results,
+            results: &shown,
+            plan: &p1,
+            choices: &[],
+        },
+        Some(&g),
+    )
+    .unwrap();
+
+    // 2. A clarifying question from the LLM.
+    let l = understand::parse_llm(&serde_json::json!({
+        "search_text": "", "keywords": [], "exclude": [], "file_type": "any", "date": "any",
+        "intent": "clarify", "clarify_question": "Hangi proje?", "clarify_options": ["20coin", "satranç"]
+    }))
+    .unwrap();
+    let p2 = understand::plan("şunu bul", Some(&l), true);
+    let choices: Vec<tamgabul_core::dto::Choice> = p2
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, o)| tamgabul_core::dto::Choice {
+            id: format!("opt:{i}"),
+            label: o.clone(),
+            count: 0,
+        })
+        .collect();
+    history::record_search(
+        &mut e.conn,
+        &session,
+        "şunu bul",
+        &Answer {
+            kind: SearchKind::Clarify,
+            results: &[],
+            plan: &p2,
+            choices: &choices,
+        },
+        Some(&g),
+    )
+    .unwrap();
+
+    let ctx = history::context(&e.conn, Some(&session)).unwrap();
+    assert_eq!(ctx.prior.len(), 2);
+    assert_eq!(ctx.prior[0].user, "bütçe pdf");
+    assert_eq!(ctx.prior[0].shown, ["report.pdf"]);
+    assert_eq!(
+        ctx.active.file_type,
+        FileTypeFilter::Pdf,
+        "kept from the search, not the question"
+    );
+    assert!(ctx.last_was_clarify);
+    assert_eq!(ctx.last_user.as_deref(), Some("şunu bul"));
+
+    let turns = history::session_turns(&e.conn, &session).unwrap();
+    assert_eq!(
+        turns[1].understood.as_ref().unwrap().file_type,
+        FileTypeFilter::Pdf
+    );
+    assert_eq!(turns[3].kind, Some(SearchKind::Clarify));
+    assert_eq!(turns[3].question.as_deref(), Some("Hangi proje?"));
+    assert_eq!(turns[3].choices[1].label, "satranç");
+    let intent: String = e
+        .conn
+        .query_row(
+            "SELECT intent FROM turns WHERE session_id = ?1 AND ordinal = 2",
+            [&session],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(intent, "clarify");
+    assert!(history::context(&e.conn, None).unwrap().prior.is_empty());
 }
