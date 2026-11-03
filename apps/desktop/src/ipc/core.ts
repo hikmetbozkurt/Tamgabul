@@ -1,17 +1,22 @@
-// The real Rust core. Health, models (P4) and folders (P1) are live; search
-// (P2) and history (P3) answer NOT_IMPLEMENTED until their phase lands. The
-// UI renders that state honestly.
+// The real Rust core: health, models (P4), folders (P1), search (P2) and
+// history (P3). In a plain browser (no core) lists are empty and actions
+// answer NOT_IMPLEMENTED; the UI renders that state honestly.
 import { Channel } from "@tauri-apps/api/core";
 import type { Api } from "./api";
 import { call, isTauri, on } from "./bridge";
 import type { AppHealth } from "../bindings/AppHealth";
 import type { IpcError } from "../bindings/IpcError";
 import type { ModelEntry } from "../bindings/ModelEntry";
+import type { HistorySession } from "../bindings/HistorySession";
+import type { HistoryTurn } from "../bindings/HistoryTurn";
 import type { IndexStats } from "../bindings/IndexStats";
 import type { RegisterModelRequest } from "../bindings/RegisterModelRequest";
+import type { ResultPreview } from "../bindings/ResultPreview";
 import type { RevokeRequest } from "../bindings/RevokeRequest";
 import type { ScopePreview } from "../bindings/ScopePreview";
 import type { ScopeSummary } from "../bindings/ScopeSummary";
+import type { SearchRequest } from "../bindings/SearchRequest";
+import type { SearchResponse } from "../bindings/SearchResponse";
 import type { TtlPolicy } from "../bindings/TtlPolicy";
 import type { ValidationStep } from "../bindings/ValidationStep";
 
@@ -20,13 +25,6 @@ const noCore = (command: string): IpcError => ({
   detail: `${command} (no desktop core in browser)`,
 });
 
-const notYet = async (command: string): Promise<never> => {
-  if (!isTauri()) {
-    throw { code: "NOT_IMPLEMENTED", detail: `${command} (no desktop core in browser)` } satisfies IpcError;
-  }
-  await call("not_implemented", { command });
-  throw { code: "NOT_IMPLEMENTED", detail: command } satisfies IpcError;
-};
 
 export class CoreApi implements Api {
   private listeners = new Set<() => void>();
@@ -158,12 +156,43 @@ export class CoreApi implements Api {
     await call("relink_scope", { scopeId });
   }
 
-  search = () => notYet("submit_utterance");
-  preview = () => notYet("preview_result");
-  openResult = () => notYet("open_result");
+  async search(req: SearchRequest): Promise<SearchResponse> {
+    if (!isTauri()) throw noCore("search");
+    const r = await call<SearchResponse>("search", { req });
+    this.changed();
+    return r;
+  }
 
-  listHistory = () => notYet("list_history");
-  sessionTurns = () => notYet("list_history");
-  deleteSession = () => notYet("delete_history");
-  clearHistory = () => notYet("delete_history");
+  async preview(resultRef: string): Promise<ResultPreview> {
+    if (!isTauri()) throw noCore("preview_result");
+    return call<ResultPreview>("preview_result", { resultRef });
+  }
+
+  async openResult(resultRef: string, reveal: boolean) {
+    if (!isTauri()) throw noCore("open_result");
+    await call("open_result", { resultRef, reveal });
+    this.changed();
+  }
+
+  async listHistory(): Promise<HistorySession[]> {
+    if (!isTauri()) return [];
+    return call<HistorySession[]>("list_history");
+  }
+
+  async sessionTurns(sessionId: string): Promise<HistoryTurn[]> {
+    if (!isTauri()) return [];
+    return call<HistoryTurn[]>("session_turns", { sessionId });
+  }
+
+  async deleteSession(sessionId: string) {
+    if (!isTauri()) throw noCore("delete_session");
+    await call("delete_session", { sessionId });
+    this.changed();
+  }
+
+  async clearHistory() {
+    if (!isTauri()) throw noCore("clear_history");
+    await call("clear_history");
+    this.changed();
+  }
 }

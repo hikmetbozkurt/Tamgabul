@@ -1,6 +1,6 @@
 # P2-01 EmbeddingGemma 2 Retrieval
 
-**Phase:** P2 • **Owner:** Retrieval + Runtime • **Status:** TODO • **Dependencies:** P1-01, P0-02 (feasibility recorded)
+**Phase:** P2 • **Owner:** Retrieval + Runtime • **Status:** IN PROGRESS (hybrid search + history live; Windows run PENDING) • **Dependencies:** P1-01, P0-02 (feasibility recorded)
 
 ## Objective
 Index authorized content with EmbeddingGemma 2 under a pinned index generation and return evidenced hybrid (FTS5 + vector) results. Missing/invalid EG2 shows red and disables semantic search; nothing substitutes another embedding model.
@@ -23,3 +23,9 @@ AGENTS.md; docs/04_MODEL_REGISTRY.md; docs/08_RETRIEVAL_CONVERSATION.md; docs/12
 
 ## Deliverables and report
 Code + automated tests + commands/results + platform/hardware/runtime versions + security/privacy notes. Mark real runtime tests as PENDING until observed. Keep weights and private data out of git.
+
+### Progress report — 2026-11-03
+- **Done:** `crates/core/src/search.rs` — query embedded with the model-card query prompt; brute-force cosine over the CURRENT generation (vectors L2-normalized), FTS5 trigram word match, file-name match; reciprocal rank fusion (k=60) grouped per document; meaning-only hits kept within 0.12 of the best cosine (heuristic, not calibrated); every result re-authorized against live grants + exclusions. Cards: snippet around the first matched word with highlights, folder, file kind, modified time, match reason (meaning / word / file name / image). `crates/core/src/history.rs` — sessions, turns, search events and result references in SQLite; results rebuilt and re-authorized on every read (revoked folders vanish from old conversations); opened marks; history-off sessions dropped at start.
+- **App:** `search`, `preview_result`, `open_result` (re-checks grant + file, then Explorer open / select), `list_history`, `session_turns`, `delete_session`, `clear_history`. Falls back to word + file-name search if the model can't start.
+- **Tests:** search unit tests + integration test (meaning, words in PDF, file name of an image, card/snippet/highlights, history round trip, revoke hides results now and in history).
+- **Not yet:** LLM clarification, vector index (brute force is linear in chunks), query-time image search by example, evaluation set.

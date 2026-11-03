@@ -8,10 +8,12 @@ pub mod db;
 pub mod dto;
 pub mod error;
 pub mod health;
+pub mod history;
 pub mod index;
 pub mod ipc;
 pub mod model;
 pub mod registry;
+pub mod search;
 pub mod settings;
 
 /// Version of the UI <-> Rust IPC contract (docs/13_API_CONTRACTS.md).

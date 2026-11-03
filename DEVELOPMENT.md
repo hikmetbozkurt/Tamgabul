@@ -40,7 +40,10 @@ Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
 `npm run tauri dev` → Models → Add model → Embedding → `C:\AI\models\embeddinggemma-2` klasöründeki `.gguf` dosyasını seç. Uygulama 5 adımı kontrol eder (dosya, format, SHA-256, llama-server, kısa deneme) → Save. Durum "On disk" olur; ilk aramada ya da "Load" ile açılır, boşta kalınca kapanır (süre modelin kartından seçilir).
 
 ### Klasör ekleme (P1)
-Folders → Add folder → klasör seç → önizleme (dosya sayısı, tahmini boyut, otomatik hariç tutulanlar) → "Allow and scan". Şimdilik `.md` ve `.txt` dosyaları okunur; dosyalar asla değiştirilmez. Tarama sırasında EmbeddingGemma 2 açılır, bitince boşta kalma süresine göre kapanır. "Remove & purge" klasörü aramadan hemen çıkarır ve indeksini siler.
+Folders → Add folder → klasör seç → önizleme (dosya sayısı, tahmini boyut, otomatik hariç tutulanlar) → "Allow and scan". Okunanlar: `.md`, `.txt`, `.pdf` (metin katmanı; taranmış PDF'ler şimdilik atlanır) ve `.png/.jpg/.jpeg/.bmp/.gif` (EmbeddingGemma 2'nin görüntü kısmıyla). Dosyalar asla değiştirilmez. Tarama sırasında EmbeddingGemma 2 açılır, bitince boşta kalma süresine göre kapanır. "Remove & purge" klasörü aramadan hemen çıkarır ve indeksini siler.
+
+### Arama (P2)
+Search ekranında ya da widget'ta yaz → sonuçlar anlam + kelime + dosya adı ile bulunur. Aç / Klasörde göster / Önizle çalışır. Konuşmalar Memory ekranında saklanır (Settings'ten kapatılabilir).
 
 ### P0-02 testi (EmbeddingGemma 2)
 ```powershell

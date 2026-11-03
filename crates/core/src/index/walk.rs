@@ -68,26 +68,42 @@ pub const DRIVE_ROOT_EXCLUDES: &[&str] = &[
     "library",
 ];
 
-/// File kinds indexed in this phase.
+/// File kinds indexed today. Images go to the vision encoder; PDFs are
+/// text-extracted page by page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextKind {
+pub enum SourceKind {
     Markdown,
     Text,
+    Pdf,
+    Image,
 }
 
-impl TextKind {
+impl SourceKind {
     pub fn from_path(p: &Path) -> Option<Self> {
         let ext = p.extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
-            "md" | "markdown" => Some(TextKind::Markdown),
-            "txt" => Some(TextKind::Text),
+            "md" | "markdown" => Some(SourceKind::Markdown),
+            "txt" => Some(SourceKind::Text),
+            "pdf" => Some(SourceKind::Pdf),
+            // Formats the llama.cpp image loader (stb_image) decodes.
+            "png" | "jpg" | "jpeg" | "bmp" | "gif" => Some(SourceKind::Image),
             _ => None,
         }
     }
     pub fn as_db_str(self) -> &'static str {
         match self {
-            TextKind::Markdown => "markdown",
-            TextKind::Text => "text",
+            SourceKind::Markdown => "markdown",
+            SourceKind::Text => "text",
+            SourceKind::Pdf => "pdf",
+            SourceKind::Image => "image",
+        }
+    }
+    /// Size cap per kind; `text_cap` is the (configurable) text limit.
+    pub fn max_bytes(self, text_cap: u64) -> u64 {
+        match self {
+            SourceKind::Markdown | SourceKind::Text => text_cap,
+            SourceKind::Pdf => 64 * 1024 * 1024,
+            SourceKind::Image => 32 * 1024 * 1024,
         }
     }
 }
@@ -96,6 +112,7 @@ impl TextKind {
 pub struct Limits {
     pub max_files: usize,
     pub max_depth: usize,
+    /// Cap for text files (PDF/image caps are fixed per kind).
     pub max_file_bytes: u64,
     pub deadline: Option<Instant>,
 }
@@ -114,7 +131,7 @@ impl Default for Limits {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub path: PathBuf,
-    pub kind: TextKind,
+    pub kind: SourceKind,
     pub size: u64,
     pub mtime: SystemTime,
 }
@@ -272,14 +289,14 @@ pub fn walk(root: &Path, deny: &[PathBuf], limits: Limits, cancel: &AtomicBool) 
             if !ft.is_file() {
                 continue;
             }
-            let Some(kind) = TextKind::from_path(&path) else {
+            let Some(kind) = SourceKind::from_path(&path) else {
                 continue;
             };
             if a & (ATTR_OFFLINE | ATTR_RECALL_ON_OPEN | ATTR_RECALL_ON_DATA_ACCESS) != 0 {
                 r.skipped_cloud += 1;
                 continue;
             }
-            if md.len() > limits.max_file_bytes {
+            if md.len() > kind.max_bytes(limits.max_file_bytes) {
                 r.skipped_large += 1;
                 continue;
             }
@@ -325,6 +342,8 @@ mod tests {
         fs::write(p.join("notes/b.txt"), "b").unwrap();
         fs::write(p.join("notes/sub/c.MD"), "c").unwrap();
         fs::write(p.join("notes/image.png"), "x").unwrap();
+        fs::write(p.join("notes/report.PDF"), "%PDF").unwrap();
+        fs::write(p.join("notes/data.docx"), "x").unwrap();
         fs::write(p.join("node_modules/pkg/readme.md"), "no").unwrap();
         fs::write(p.join(".git/HEAD.txt"), "no").unwrap();
         fs::write(p.join("Build/out.txt"), "no").unwrap();
@@ -347,9 +366,12 @@ mod tests {
         let root = canonical(d.path()).unwrap();
         let r = walk(&root, &[], Limits::default(), &AtomicBool::new(false));
         assert!(r.complete);
-        assert_eq!(names(&r), ["a.md", "b.txt", "c.MD"]);
+        assert_eq!(
+            names(&r),
+            ["a.md", "b.txt", "c.MD", "image.png", "report.PDF"]
+        );
         assert_eq!(r.excluded_names, [".git", "Build", "node_modules"]);
-        assert_eq!(r.total_bytes, 5);
+        assert_eq!(r.total_bytes, 10);
     }
 
     #[test]
@@ -385,8 +407,9 @@ mod tests {
             },
             &AtomicBool::new(false),
         );
-        // a.md is 3 bytes → too large; c.MD is denied.
-        assert_eq!(names(&r), ["b.txt"]);
+        // a.md is 3 bytes → too large for the text cap; c.MD is denied;
+        // image/PDF caps are separate.
+        assert_eq!(names(&r), ["b.txt", "image.png", "report.PDF"]);
         assert_eq!(r.skipped_large, 1);
     }
 
@@ -402,7 +425,10 @@ mod tests {
             .unwrap();
         let root = canonical(d.path()).unwrap();
         let r = walk(&root, &[], Limits::default(), &AtomicBool::new(false));
-        assert_eq!(names(&r), ["a.md", "b.txt", "c.MD"]);
+        assert_eq!(
+            names(&r),
+            ["a.md", "b.txt", "c.MD", "image.png", "report.PDF"]
+        );
         assert_eq!(r.skipped_links, 3);
     }
 

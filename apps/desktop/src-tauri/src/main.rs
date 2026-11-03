@@ -5,6 +5,7 @@ mod commands;
 mod hotkey;
 mod models;
 mod scopes;
+mod search_cmd;
 mod tray;
 mod windows;
 
@@ -125,6 +126,7 @@ fn main() {
             models::init(&app.state::<AppState>());
             // Finish interrupted purges first, then resume interrupted scans.
             scopes::resume(app.handle());
+            search_cmd::init(&app.state::<AppState>());
 
             let active = hotkey::register(app.handle(), &loaded.hotkey).is_ok();
             *app.state::<AppState>().hotkey_active.lock().unwrap() = active;
@@ -162,6 +164,13 @@ fn main() {
             scopes::set_watching,
             scopes::relink_scope,
             scopes::revoke_scope,
+            search_cmd::search,
+            search_cmd::preview_result,
+            search_cmd::open_result,
+            search_cmd::list_history,
+            search_cmd::session_turns,
+            search_cmd::delete_session,
+            search_cmd::clear_history,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tamgabul")

@@ -124,6 +124,9 @@
 
   "match.previous_result": "Shown before",
   "match.semantic": "Meaning match",
+  "match.keyword": "Word match",
+  "match.filename": "File name",
+  "match.image": "Image match",
   "match.ocr": "Text in image",
 
   "preview.label": "Preview",

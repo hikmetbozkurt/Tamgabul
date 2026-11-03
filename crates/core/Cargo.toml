@@ -13,6 +13,7 @@ thiserror.workspace = true
 rusqlite.workspace = true
 ts-rs.workspace = true
 blake3 = "1"
+pdf-extract = "0.12"
 
 [dev-dependencies]
 tempfile.workspace = true

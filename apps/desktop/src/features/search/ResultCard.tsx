@@ -71,7 +71,7 @@ export function ResultCard({ r, opened, ...a }: { r: Card; opened?: boolean } & 
 /** Widget row: icon, title, project · path · age, one action. */
 export function CompactResult({ r, onOpen, primary }: { r: Card; onOpen: (ref: string) => void; primary?: boolean }) {
   const { t, lang } = useI18n();
-  const meta = [r.project, r.display_path.split("/").slice(-2).join("/"), relativeTime(r.modified_at, lang)].filter(Boolean).join(" · ");
+  const meta = [r.project, r.display_path.split(/[\\/]/).filter(Boolean).slice(-2).join("/"), relativeTime(r.modified_at, lang)].filter(Boolean).join(" · ");
   return (
     <article className="card w-result" data-result tabIndex={0} onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && onOpen(r.result_ref)}>
       <span className={`icon-tile ${r.file_kind === "image" ? "" : "file"} w-tile`}>

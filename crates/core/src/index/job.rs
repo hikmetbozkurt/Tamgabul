@@ -17,8 +17,10 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 
 use crate::error::{ErrorCode, IpcError};
+use crate::index::extract;
 use crate::index::store::{self, DocMeta, NewChunk};
 use crate::index::text;
+use crate::index::walk::SourceKind;
 use crate::index::walk::{self, Limits};
 
 /// Turns chunk texts into vectors. The app implements it with EmbeddingGemma
@@ -26,6 +28,10 @@ use crate::index::walk::{self, Limits};
 pub trait Embedder {
     fn embed_documents(&mut self, title: &str, texts: &[String])
         -> Result<Vec<Vec<f32>>, IpcError>;
+    /// Can this model embed images (vision encoder present)?
+    fn supports_images(&mut self) -> bool;
+    /// Raw image file bytes (PNG/JPEG/…) → one vector.
+    fn embed_image(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -127,12 +133,15 @@ pub fn run(
 
         let committed = (|| -> Result<bool, IpcError> {
             if let Some(d) = &prior {
-                if d.size == c.size && d.mtime == mtime && d.indexed_in_generation {
+                if d.size == c.size
+                    && d.mtime == mtime
+                    && (d.indexed_in_generation || d.permanently_skipped())
+                {
                     p.unchanged += 1;
                     return store::keep_document(conn, input.scope_id, &d.document_id, &mtime);
                 }
             }
-            let bytes = match read_file(&c.path, limits.max_file_bytes) {
+            let bytes = match read_file(&c.path, c.kind.max_bytes(limits.max_file_bytes)) {
                 Ok(b) => b,
                 Err(_) => {
                     p.errors += 1;
@@ -152,28 +161,95 @@ pub fn run(
                     return store::keep_document(conn, input.scope_id, &d.document_id, &mtime);
                 }
             }
-            let Some(body) = text::decode(&bytes) else {
-                p.skipped += 1;
-                return store::record_skipped(
-                    conn,
-                    input.scope_id,
-                    &meta(c, &mtime, Some(&hash)),
-                    "SKIPPED",
-                    "binary",
-                );
-            };
-            let chunks = text::chunk(&body);
             let title = c
                 .path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let mut out = Vec::with_capacity(chunks.len());
-            for batch in chunks.chunks(input.batch.max(1)) {
+            // (page, chunk) pairs of text, or a single image.
+            let mut pieces: Vec<(Option<u32>, text::Chunk)> = Vec::new();
+            let mut image: Option<Vec<f32>> = None;
+            match c.kind {
+                SourceKind::Markdown | SourceKind::Text => {
+                    let Some(body) = text::decode(&bytes) else {
+                        p.skipped += 1;
+                        return store::record_skipped(
+                            conn,
+                            input.scope_id,
+                            &meta(c, &mtime, Some(&hash)),
+                            "SKIPPED",
+                            "binary",
+                        );
+                    };
+                    pieces.extend(text::chunk(&body).into_iter().map(|ch| (None, ch)));
+                }
+                SourceKind::Pdf => match extract::pdf_pages(bytes, extract::PDF_TIMEOUT) {
+                    Ok(pages) => {
+                        for (i, page) in pages.iter().enumerate() {
+                            for ch in text::chunk(page) {
+                                if pieces.len() >= text::MAX_CHUNKS_PER_DOC {
+                                    break;
+                                }
+                                pieces.push((Some(i as u32 + 1), ch));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        p.skipped += 1;
+                        return store::record_skipped(
+                            conn,
+                            input.scope_id,
+                            &meta(c, &mtime, Some(&hash)),
+                            "SKIPPED",
+                            e.code(),
+                        );
+                    }
+                },
+                SourceKind::Image => {
+                    if !embedder.supports_images() {
+                        p.skipped += 1;
+                        return store::record_skipped(
+                            conn,
+                            input.scope_id,
+                            &meta(c, &mtime, Some(&hash)),
+                            "SKIPPED",
+                            "no_image_encoder",
+                        );
+                    }
+                    match embedder.embed_image(&bytes) {
+                        Ok(v) => image = Some(v),
+                        // One undecodable image must not stop the scan.
+                        Err(e) if e.code == ErrorCode::ModelIncompatible => {
+                            p.skipped += 1;
+                            return store::record_skipped(
+                                conn,
+                                input.scope_id,
+                                &meta(c, &mtime, Some(&hash)),
+                                "SKIPPED",
+                                "image_unreadable",
+                            );
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            let mut out = Vec::with_capacity(pieces.len().max(1));
+            if let Some(v) = image {
+                out.push(NewChunk {
+                    ordinal: 0,
+                    modality: "image",
+                    text: None,
+                    page: None,
+                    line_start: None,
+                    line_end: None,
+                    vector: v,
+                });
+            }
+            for (n, batch) in pieces.chunks(input.batch.max(1)).enumerate() {
                 if cancel.load(Ordering::Relaxed) {
                     return Ok(false);
                 }
-                let texts: Vec<String> = batch.iter().map(|c| c.text.clone()).collect();
+                let texts: Vec<String> = batch.iter().map(|(_, c)| c.text.clone()).collect();
                 let vecs = embedder.embed_documents(&title, &texts)?;
                 if vecs.len() != batch.len() {
                     return Err(IpcError::new(
@@ -181,15 +257,27 @@ pub fn run(
                         "embedding count mismatch",
                     ));
                 }
-                for (ch, v) in batch.iter().zip(vecs) {
+                for (i, ((page, ch), v)) in batch.iter().zip(vecs).enumerate() {
                     out.push(NewChunk {
-                        ordinal: ch.ordinal,
-                        text: ch.text.clone(),
-                        line_start: ch.line_start,
-                        line_end: ch.line_end,
+                        ordinal: (n * input.batch.max(1) + i) as u32,
+                        modality: "text",
+                        text: Some(ch.text.clone()),
+                        page: *page,
+                        line_start: Some(ch.line_start),
+                        line_end: Some(ch.line_end),
                         vector: v,
                     });
                 }
+            }
+            if out.is_empty() {
+                p.skipped += 1;
+                return store::record_skipped(
+                    conn,
+                    input.scope_id,
+                    &meta(c, &mtime, Some(&hash)),
+                    "SKIPPED",
+                    "empty",
+                );
             }
             p.indexed += 1;
             store::commit_document(

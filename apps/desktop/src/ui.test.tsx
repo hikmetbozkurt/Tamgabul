@@ -41,10 +41,10 @@ describe("app surface without a model", () => {
     expect(screen.getAllByText("Not installed").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("#/memory says the backend is not available yet", async () => {
+  it("#/memory shows the real (empty) history", async () => {
     sessionStorage.setItem("tamgabul.welcomed", "1");
     renderApp("#/memory");
-    expect(await screen.findByText("Not available yet")).toBeTruthy();
+    expect(await screen.findByText("No history yet")).toBeTruthy();
   });
 
   it("#/folders shows the real (empty) folder list", async () => {

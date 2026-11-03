@@ -16,7 +16,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::dto::RevokeMode;
 use crate::error::{ErrorCode, IpcError};
-use crate::index::walk::{is_within, TextKind};
+use crate::index::walk::{is_within, SourceKind};
 
 fn err(e: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::Internal, format!("index store: {e}"))
@@ -338,8 +338,20 @@ pub struct DocState {
     pub mtime: String,
     pub content_hash: Option<String>,
     pub parse_status: String,
+    pub parse_error: Option<String>,
     /// Chunks with vectors in `generation`.
     pub indexed_in_generation: bool,
+}
+
+impl DocState {
+    /// A skip that will not change unless the file changes.
+    pub fn permanently_skipped(&self) -> bool {
+        self.parse_status == "SKIPPED"
+            && matches!(
+                self.parse_error.as_deref(),
+                Some("binary" | "pdf_no_text" | "pdf_unreadable" | "empty")
+            )
+    }
 }
 
 pub fn doc_by_path(
@@ -348,7 +360,7 @@ pub fn doc_by_path(
     generation: &str,
 ) -> Result<Option<DocState>, IpcError> {
     conn.query_row(
-        "SELECT d.document_id, d.size_bytes, d.mtime, d.content_hash, d.parse_status,
+        "SELECT d.document_id, d.size_bytes, d.mtime, d.content_hash, d.parse_status, d.parse_error,
             EXISTS(SELECT 1 FROM chunks c JOIN embedding_records e ON e.chunk_id = c.chunk_id
                    WHERE c.document_id = d.document_id AND c.generation_id = ?2)
          FROM documents d WHERE d.canonical_path = ?1",
@@ -360,7 +372,8 @@ pub fn doc_by_path(
                 mtime: r.get(2)?,
                 content_hash: r.get(3)?,
                 parse_status: r.get(4)?,
-                indexed_in_generation: r.get::<_, i64>(5)? != 0,
+                parse_error: r.get(5)?,
+                indexed_in_generation: r.get::<_, i64>(6)? != 0,
             })
         },
     )
@@ -371,15 +384,19 @@ pub fn doc_by_path(
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewChunk {
     pub ordinal: u32,
-    pub text: String,
-    pub line_start: u32,
-    pub line_end: u32,
+    /// "text" or "image".
+    pub modality: &'static str,
+    /// `None` for an image chunk.
+    pub text: Option<String>,
+    pub page: Option<u32>,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
     pub vector: Vec<f32>,
 }
 
 pub struct DocMeta<'a> {
     pub path: &'a Path,
-    pub kind: TextKind,
+    pub kind: SourceKind,
     pub size: u64,
     pub mtime: &'a str,
     pub content_hash: Option<&'a str>,
@@ -439,8 +456,10 @@ pub fn vector_bytes(v: &[f32]) -> Vec<u8> {
 }
 
 pub fn vector_from_bytes(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
         .collect()
 }
 
@@ -464,8 +483,8 @@ pub fn commit_document(
     {
         let mut ins = tx
             .prepare(
-                "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text, line_start, line_end)
-                 VALUES (?1, ?2, ?3, 'text', ?4, ?5, ?6)",
+                "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text, page, line_start, line_end)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )
             .map_err(err)?;
         let mut emb = tx
@@ -476,7 +495,9 @@ pub fn commit_document(
                 id,
                 generation,
                 c.ordinal,
+                c.modality,
                 c.text,
+                c.page,
                 c.line_start,
                 c.line_end
             ])

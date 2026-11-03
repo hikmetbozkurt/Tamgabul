@@ -124,6 +124,9 @@
 
   "match.previous_result": "Daha önce gösterildi",
   "match.semantic": "Anlam eşleşmesi",
+  "match.keyword": "Kelime eşleşmesi",
+  "match.filename": "Dosya adı",
+  "match.image": "Görsel eşleşmesi",
   "match.ocr": "Görseldeki yazı",
 
   "preview.label": "Önizleme",

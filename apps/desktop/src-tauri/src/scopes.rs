@@ -427,6 +427,24 @@ struct Eg2Embedder {
     model_id: String,
     lease: Option<Lease>,
     client: Option<Client>,
+    props: Option<tamgabul_runtime::client::Props>,
+}
+
+impl Eg2Embedder {
+    fn client(&mut self) -> Result<&Client, IpcError> {
+        if self.client.is_none() {
+            let state = self.app.state::<AppState>();
+            let lease = state
+                .models
+                .acquire(&self.model_id)
+                .map_err(crate::models::ipc)?;
+            let c = Client::new(lease.endpoint().clone(), Duration::from_secs(180));
+            self.props = Some(c.props().map_err(crate::models::ipc)?);
+            self.client = Some(c);
+            self.lease = Some(lease);
+        }
+        Ok(self.client.as_ref().expect("client set above"))
+    }
 }
 
 impl Embedder for Eg2Embedder {
@@ -461,6 +479,37 @@ impl Embedder for Eg2Embedder {
         }
         Ok(out)
     }
+
+    fn supports_images(&mut self) -> bool {
+        self.client().is_ok() && self.props.as_ref().is_some_and(|p| p.vision)
+    }
+
+    fn embed_image(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError> {
+        let marker = self
+            .props
+            .as_ref()
+            .map(|p| p.media_marker.clone())
+            .unwrap_or_else(|| tamgabul_runtime::client::DEFAULT_MEDIA_MARKER.into());
+        let c = self.client()?;
+        match c.embed_media(&marker, &marker, &[bytes]) {
+            Ok(mut v) => {
+                if v.len() != eg2::NATIVE_DIM || !eg2::is_valid_vector(&v) {
+                    return Err(IpcError::new(
+                        ErrorCode::ModelIncompatible,
+                        "invalid image embedding",
+                    ));
+                }
+                eg2::normalize(&mut v);
+                Ok(v)
+            }
+            // The server answered but could not use this file (corrupt,
+            // unsupported variant): skip the image, keep scanning.
+            Err(tamgabul_runtime::RuntimeError::Request(m)) if m.starts_with("HTTP ") => Err(
+                IpcError::new(ErrorCode::ModelIncompatible, "image not decodable"),
+            ),
+            Err(e) => Err(crate::models::ipc(e)),
+        }
+    }
 }
 
 pub fn generation_spec(m: &ModelRecord) -> GenerationSpec {
@@ -469,12 +518,16 @@ pub fn generation_spec(m: &ModelRecord) -> GenerationSpec {
         model_hash: m.weights_sha256.clone().unwrap_or_else(|| "unknown".into()),
         model_revision: m.model_revision.clone().unwrap_or_else(|| "local".into()),
         adapter_version: format!("{} {}", m.runtime_adapter, m.adapter_version),
-        preprocessing: "text-chunk-v1 (1000/1600 chars, line provenance)".into(),
+        preprocessing: "v2: text/markdown chunks 1000/1600 chars with lines; pdf text per page; images raw to vision encoder".into(),
         query_instruction: eg2::query_prompt(eg2::Task::SearchResult, "{query}"),
         document_instruction: eg2::document_prompt(Some("{title}"), "{content}"),
         dimension: eg2::NATIVE_DIM as u32,
         normalization: "l2".into(),
-        modalities: vec!["text".into()],
+        modalities: if m.capabilities.iter().any(|c| c == "image") {
+            vec!["text".into(), "image".into()]
+        } else {
+            vec!["text".into()]
+        },
     }
 }
 
@@ -512,6 +565,7 @@ fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome,
         model_id: model.model_id.clone(),
         lease: None,
         client: None,
+        props: None,
     };
     let mut last = Instant::now();
     let (outcome, _) = job::run(
