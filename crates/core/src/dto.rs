@@ -187,6 +187,22 @@ ts_export! {
         pub error_code: Option<ErrorCode>,
     }
 
+    /// GPU memory read from the driver (NVIDIA `nvidia-smi`); all programs.
+    pub struct GpuUsage {
+        pub name: String,
+        pub used_mb: u32,
+        pub total_mb: u32,
+    }
+
+    /// Settings → Performance. Every number is measured; `None` = could not
+    /// be read on this system.
+    pub struct ResourceUsage {
+        /// Sum of the working sets of running model workers.
+        pub models_ram_mb: Option<u32>,
+        pub running_models: u32,
+        pub gpu: Option<GpuUsage>,
+    }
+
     pub struct IndexStats {
         pub scope_count: u32,
         pub file_count: Option<u32>,

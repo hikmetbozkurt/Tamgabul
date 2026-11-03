@@ -49,3 +49,13 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 
 /* thin, quiet scrollbars */
 * { scrollbar-width: thin; scrollbar-color: #D6D6D3 transparent; }
+
+/* Windows high-contrast themes: keep state visible when the system replaces
+   colors (toggles, selected options, focus). */
+@media (forced-colors: active) {
+  :focus-visible { outline-color: Highlight; }
+  .toggle { border: 1px solid ButtonText; }
+  .toggle[aria-checked="true"] { background: Highlight; }
+  .seg [role="radio"][aria-checked="true"] { outline: 2px solid Highlight; }
+  .dot { forced-color-adjust: none; }
+}

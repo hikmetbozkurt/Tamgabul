@@ -68,13 +68,29 @@ export function Segmented<V extends string>({
   large?: boolean;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className={`seg${large ? " lg" : ""}`}>
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={`seg${large ? " lg" : ""}`}
+      onKeyDown={(e) => {
+        // Radio group pattern: one Tab stop, arrows move and select.
+        const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const i = options.findIndex((o) => o.value === value);
+        const next = options[(i + step + options.length) % options.length];
+        onChange(next.value);
+        const btns = e.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]");
+        btns[options.indexOf(next)]?.focus();
+      }}
+    >
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           role="radio"
           aria-checked={o.value === value}
+          tabIndex={o.value === value || (!options.some((x) => x.value === value) && o === options[0]) ? 0 : -1}
           onClick={() => onChange(o.value)}
         >
           {o.label}

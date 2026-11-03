@@ -6,6 +6,7 @@ import type { HistoryTurn } from "../bindings/HistoryTurn";
 import type { IndexStats } from "../bindings/IndexStats";
 import type { ModelEntry } from "../bindings/ModelEntry";
 import type { RegisterModelRequest } from "../bindings/RegisterModelRequest";
+import type { ResourceUsage } from "../bindings/ResourceUsage";
 import type { ResultPreview } from "../bindings/ResultPreview";
 import type { RevokeRequest } from "../bindings/RevokeRequest";
 import type { ScopePreview } from "../bindings/ScopePreview";
@@ -49,6 +50,12 @@ export interface Api {
   sessionTurns(sessionId: string): Promise<HistoryTurn[]>;
   deleteSession(sessionId: string): Promise<void>;
   clearHistory(): Promise<void>;
+
+  /** Measured RAM of running models and GPU memory (Settings → Performance). */
+  resourceUsage(): Promise<ResourceUsage>;
+  /** Writes the redacted diagnostics JSON to `path`. */
+  exportDiagnostics(path: string): Promise<void>;
+  openDataFolder(): Promise<void>;
 }
 
 // The conversation shown in Search, shared by both windows (widget → app).

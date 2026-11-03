@@ -6,6 +6,7 @@ mod hotkey;
 mod models;
 mod scopes;
 mod search_cmd;
+mod system;
 mod tray;
 mod windows;
 
@@ -171,6 +172,9 @@ fn main() {
             search_cmd::session_turns,
             search_cmd::delete_session,
             search_cmd::clear_history,
+            system::resource_usage,
+            system::export_diagnostics,
+            system::open_data_folder,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tamgabul")

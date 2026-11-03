@@ -66,3 +66,11 @@ export async function pickPath(directory: boolean, title: string): Promise<strin
   const r = await open({ directory, multiple: false, title });
   return typeof r === "string" ? r : null;
 }
+
+/** Native save dialog; `null` when cancelled or outside the app. */
+export async function pickSavePath(defaultName: string, title: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const r = await save({ defaultPath: defaultName, title, filters: [{ name: "JSON", extensions: ["json"] }] });
+  return typeof r === "string" ? r : null;
+}

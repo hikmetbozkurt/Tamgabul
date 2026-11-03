@@ -167,7 +167,13 @@ fn entry(rec: &ModelRecord, mgr: &ModelManager) -> ModelEntry {
         required: rec.category.is_required(),
         runtime: Some(format!("{} {}", rec.runtime_adapter, rec.adapter_version)),
         dimension: rec.embedding_dim,
-        memory_mb: None,
+        // Measured from the OS while the worker runs; never estimated.
+        memory_mb: snap
+            .as_ref()
+            .filter(|s| s.status.is_loaded())
+            .and_then(|s| s.pid)
+            .and_then(tamgabul_platform::usage::process_memory_mb)
+            .map(|m| m as f64),
         validated_at: rec.validated_at.clone(),
         ttl: rec.ttl.clone(),
         error_code,

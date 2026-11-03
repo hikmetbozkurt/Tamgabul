@@ -9,7 +9,9 @@ import { useSettings } from "../../state/settings";
 import { useToast } from "../../state/toast";
 import { formatMb } from "../../lib/format";
 import { isLoaded } from "../../lib/health";
-import { call, isTauri, toIpcError } from "../../ipc/bridge";
+import { call, isTauri, pickSavePath, toIpcError } from "../../ipc/bridge";
+import { LICENSES } from "../../lib/licenses";
+import type { ResourceUsage } from "../../bindings/ResourceUsage";
 import { currentSession } from "../../ipc/api";
 
 const MODIFIERS: Record<string, string> = { Control: "Ctrl", Shift: "Shift", Alt: "Alt", Meta: "Win" };
@@ -88,10 +90,34 @@ export function SettingsPage() {
   const health = useResource((a) => a.health());
   const [info, setInfo] = useState<PingResponse | null>(null);
   const [wipe, setWipe] = useState(false);
+  const [licenses, setLicenses] = useState(false);
+  const [usage, setUsage] = useState<ResourceUsage | null>(null);
 
   useEffect(() => {
     if (isTauri()) call<PingResponse>("ping", { request: { request_id: "settings" } }).then(setInfo).catch(() => {});
   }, []);
+
+  // Measured resource use, refreshed while this page is open.
+  useEffect(() => {
+    let alive = true;
+    const tick = () => api.resourceUsage().then((u) => alive && setUsage(u)).catch(() => {});
+    tick();
+    const id = window.setInterval(tick, 5000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [api]);
+
+  const exportDiagnostics = async () => {
+    try {
+      const path = await pickSavePath("tamgabul-diagnostics.json", t("settings.exportDiag"));
+      if (!path) return;
+      await api.exportDiagnostics(path);
+      toast(t("settings.diagSaved"));
+    } catch (e) {
+      toast(t(`error.${toIpcError(e).code}.title`), true);
+    }
+  };
+
+  const showDataFolder = () => api.openDataFolder().catch((e) => toast(t(`error.${toIpcError(e).code}.title`), true));
 
   const set = (patch: Partial<AppSettings>) =>
     update(patch).catch((e) => toast(t(`error.${toIpcError(e).code}.title`), true));
@@ -180,9 +206,20 @@ export function SettingsPage() {
                 </div>
               ))}
             </div>
-            <div className="two">
-              <div className="panel stat" style={{ padding: 14, background: "var(--bg)", border: 0 }}><div className="k">{t("settings.gpu")}</div><div style={{ fontWeight: 600 }}>{t("common.notMeasured")}</div></div>
-              <div className="panel stat" style={{ padding: 14, background: "var(--bg)", border: 0 }}><div className="k">{t("folders.statSize")}</div><div style={{ fontWeight: 600 }}>{stats.data?.index_mb != null ? formatMb(stats.data.index_mb, lang) : "—"}</div></div>
+            <div className="three" role="group" aria-label={t("settings.usageLabel")}>
+              <div className="panel stat usage-stat">
+                <div className="k">{t("settings.modelsRam")}</div>
+                <div className="v">{usage?.models_ram_mb != null ? formatMb(usage.models_ram_mb, lang) : usage && usage.running_models === 0 ? t("settings.noneRunning") : t("common.notMeasured")}</div>
+              </div>
+              <div className="panel stat usage-stat">
+                <div className="k">{t("settings.gpu")}</div>
+                <div className="v">{usage?.gpu ? `${formatMb(usage.gpu.used_mb, lang)} / ${formatMb(usage.gpu.total_mb, lang)}` : t("common.notMeasured")}</div>
+                <div className="small muted">{usage?.gpu ? t("settings.gpuAllApps", { name: usage.gpu.name }) : t("settings.gpuNvidiaOnly")}</div>
+              </div>
+              <div className="panel stat usage-stat">
+                <div className="k">{t("folders.statSize")}</div>
+                <div className="v">{stats.data?.index_mb != null ? formatMb(stats.data.index_mb, lang) : "—"}</div>
+              </div>
             </div>
             <span className="page-foot">{t("settings.measuredNote")}</span>
           </section>
@@ -199,12 +236,21 @@ export function SettingsPage() {
                 <option value="off">{t("settings.ret.off")}</option>
               </select>
             </div>
+            <span className="field-hint">{settings.history_enabled ? t("settings.retentionHint") : t("settings.historyOffHint")}</span>
             <div className="setting-row"><span>{t("settings.voiceStore")}</span><span className="small muted">{t("settings.never")}</span></div>
             <div className="setting-row"><span>{t("settings.network")}</span><Status tone="green">{t("settings.notUsed")}</Status></div>
+            <div className="setting-row">
+              <span>
+                {t("settings.dataFolder")}
+                <span className="field-hint" style={{ display: "block" }}>{t("settings.dataFolderHint")}</span>
+              </span>
+              <button type="button" className="btn btn-sm" onClick={showDataFolder} disabled={!isTauri()}>{t("settings.showFolder")}</button>
+            </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button type="button" className="btn btn-sm" onClick={() => toast(t("settings.diagLater"))}>{t("settings.diagnostics")}</button>
+              <button type="button" className="btn btn-sm" onClick={exportDiagnostics} disabled={!isTauri()} aria-describedby="diag-hint">{t("settings.exportDiag")}</button>
               <button type="button" className="btn btn-sm btn-danger" onClick={() => setWipe(true)}>{t("settings.wipe")}</button>
             </div>
+            <span id="diag-hint" className="field-hint">{t("settings.diagHint")}</span>
           </section>
 
           <section className="card settings-card" aria-labelledby="s-about">
@@ -213,12 +259,30 @@ export function SettingsPage() {
               <div><div className="k">{t("settings.version")}</div><div>{info?.app_version ?? "0.1.0"}</div></div>
               <div><div className="k">{t("settings.platform")}</div><div>{info ? `${info.os} · ${info.arch}` : t("settings.browserPreview")}</div></div>
               <div><div className="k">{t("settings.database")}</div><div>{health.data?.db_ok ? t("settings.dbOk") : t("settings.dbMissing")}</div></div>
-              <div><div className="k">{t("settings.licenses")}</div><button type="button" className="btn-link" onClick={() => toast(t("settings.licensesLater"))}>{t("settings.licensesLink")}</button></div>
+              <div><div className="k">{t("settings.licenses")}</div><button type="button" className="btn-link" onClick={() => setLicenses(true)}>{t("settings.licensesLink")}</button></div>
             </div>
           </section>
 
         </div>
       </div>
+
+      {licenses && (
+        <Dialog title={t("settings.licensesTitle")} subtitle={t("settings.licensesIntro")} onClose={() => setLicenses(false)}>
+          <ul className="license-list">
+            {LICENSES.map((l) => (
+              <li key={l.name}>
+                <span className="name">{l.name}</span>
+                <span className="small muted">{t(`settings.licenseKind.${l.kind}`)}</span>
+                <span className="lic">{l.license}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="field-hint">{t("settings.licensesNote")}</p>
+          <div className="dialog-actions">
+            <button type="button" className="btn" onClick={() => setLicenses(false)}>{t("common.close")}</button>
+          </div>
+        </Dialog>
+      )}
 
       {wipe && (
         <Dialog title={t("settings.wipeTitle")} onClose={() => setWipe(false)} small>

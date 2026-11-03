@@ -1136,3 +1136,38 @@ fn a_failing_vision_model_does_not_stop_the_scan() {
     assert_eq!(d.calls, 1, "tried once, then the scan went on without it");
     assert!(p.indexed > 5);
 }
+
+#[test]
+fn retention_removes_only_old_conversations() {
+    use tamgabul_core::settings::HistoryRetention;
+    let e = env();
+    let old = history::ensure_session(&e.conn, None, true).unwrap();
+    let fresh = history::ensure_session(&e.conn, None, true).unwrap();
+    e.conn
+        .execute(
+            "UPDATE sessions SET last_active_at = strftime('%Y-%m-%dT%H:%M:%fZ','now','-45 days') WHERE session_id = ?1",
+            [&old],
+        )
+        .unwrap();
+    assert_eq!(
+        history::apply_retention(&e.conn, HistoryRetention::Forever).unwrap(),
+        0
+    );
+    assert_eq!(
+        history::apply_retention(&e.conn, HistoryRetention::Days90).unwrap(),
+        0
+    );
+    assert_eq!(
+        history::apply_retention(&e.conn, HistoryRetention::Days30).unwrap(),
+        1
+    );
+    let left: Vec<String> = e
+        .conn
+        .prepare("SELECT session_id FROM sessions")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(left, [fresh]);
+}

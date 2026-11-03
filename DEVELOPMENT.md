@@ -71,7 +71,7 @@ cargo test --workspace            # Rust testleri + TS tiplerini üretir (apps/d
 cargo clippy --workspace --all-targets -- -D warnings
 cd apps\desktop
 npm run typecheck
-npm test                          # i18n, durum kuralları, ekran render testleri
+npm test                          # i18n, durum kuralları, ekran render ve erişilebilirlik (axe-core, klavye) testleri
 ```
 Rust'taki bir IPC tipi değişince `cargo test -p tamgabul-core` çalıştır ve `src/bindings/` değişikliğini commit et.
 

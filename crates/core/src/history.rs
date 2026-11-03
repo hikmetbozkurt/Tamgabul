@@ -462,6 +462,26 @@ pub fn clear_all(conn: &Connection) -> Result<(), IpcError> {
     Ok(())
 }
 
+/// Delete conversations not used within the retention window (Settings →
+/// Privacy). Their events and result references go with them. Returns how
+/// many sessions were removed.
+pub fn apply_retention(
+    conn: &Connection,
+    retention: crate::settings::HistoryRetention,
+) -> Result<usize, IpcError> {
+    use crate::settings::HistoryRetention;
+    let days = match retention {
+        HistoryRetention::Days30 => 30,
+        HistoryRetention::Days90 => 90,
+        HistoryRetention::Forever => return Ok(0),
+    };
+    conn.execute(
+        "DELETE FROM sessions WHERE last_active_at < strftime('%Y-%m-%dT%H:%M:%fZ','now', ?1)",
+        [format!("-{days} days")],
+    )
+    .map_err(err)
+}
+
 /// App start: drop sessions recorded while history was off.
 pub fn purge_unpersisted(conn: &Connection) -> Result<(), IpcError> {
     conn.execute("DELETE FROM sessions WHERE persisted = 0", [])

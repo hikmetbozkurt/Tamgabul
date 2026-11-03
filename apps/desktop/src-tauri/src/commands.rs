@@ -80,7 +80,15 @@ pub fn set_settings(
             settings::save(conn, &next)?;
         }
     }
+    let retention_changed = next.history_retention != prev.history_retention;
     *state.settings.lock().map_err(|_| lock_err())? = next;
+    if retention_changed {
+        if let Some(p) = state.db_path.as_deref() {
+            if let Ok(conn) = tamgabul_core::db::open_worker(p) {
+                crate::search_cmd::apply_retention(&state, &conn);
+            }
+        }
+    }
 
     let snap = snapshot(&state)?;
     let _ = app.emit("settings_changed", snap.clone());

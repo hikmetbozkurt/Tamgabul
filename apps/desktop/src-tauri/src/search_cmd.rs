@@ -165,6 +165,7 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
         .map(|s| s.history_enabled)
         .unwrap_or(true);
     let mut conn = worker_conn(&state)?;
+    apply_retention(&state, &conn);
     let generation = store::current_generation(&conn)?.map(|(id, _)| id);
     let acl = Acl::load(&conn)?;
     let scope_count = store::visible_scopes(&conn)?
@@ -462,9 +463,20 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), IpcError> {
     history::clear_all(&worker_conn(&state)?)
 }
 
-/// App start: forget sessions recorded while history was off.
+/// App start: forget sessions recorded while history was off, and apply
+/// the retention window.
 pub fn init(state: &AppState) {
     if let Ok(conn) = worker_conn(state) {
         let _ = history::purge_unpersisted(&conn);
+        apply_retention(state, &conn);
+    }
+}
+
+/// Settings → Privacy → keep history for N days. Runs at start, when the
+/// setting changes and before each search (the app can stay open for weeks).
+pub(crate) fn apply_retention(state: &AppState, conn: &rusqlite::Connection) {
+    let retention = state.settings.lock().map(|s| s.history_retention);
+    if let Ok(r) = retention {
+        let _ = history::apply_retention(conn, r);
     }
 }

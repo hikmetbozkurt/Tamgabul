@@ -11,6 +11,7 @@ import type { HistorySession } from "../bindings/HistorySession";
 import type { HistoryTurn } from "../bindings/HistoryTurn";
 import type { IndexStats } from "../bindings/IndexStats";
 import type { RegisterModelRequest } from "../bindings/RegisterModelRequest";
+import type { ResourceUsage } from "../bindings/ResourceUsage";
 import type { ResultPreview } from "../bindings/ResultPreview";
 import type { RevokeRequest } from "../bindings/RevokeRequest";
 import type { ScopePreview } from "../bindings/ScopePreview";
@@ -194,5 +195,20 @@ export class CoreApi implements Api {
     if (!isTauri()) throw noCore("clear_history");
     await call("clear_history");
     this.changed();
+  }
+
+  async resourceUsage(): Promise<ResourceUsage> {
+    if (!isTauri()) return { models_ram_mb: null, running_models: 0, gpu: null };
+    return call<ResourceUsage>("resource_usage");
+  }
+
+  async exportDiagnostics(path: string) {
+    if (!isTauri()) throw noCore("export_diagnostics");
+    await call("export_diagnostics", { path });
+  }
+
+  async openDataFolder() {
+    if (!isTauri()) throw noCore("open_data_folder");
+    await call("open_data_folder");
   }
 }

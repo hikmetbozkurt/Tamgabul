@@ -95,6 +95,7 @@ impl TrayHost for PlaceholderTray {
 }
 
 pub mod media;
+pub mod usage;
 
 #[cfg(test)]
 mod tests {

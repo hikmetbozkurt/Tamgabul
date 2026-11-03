@@ -10,11 +10,13 @@ import { ModelsPage } from "../features/models/ModelsPage";
 import { FoldersPage } from "../features/folders/FoldersPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { OnboardingPage } from "../features/onboarding/OnboardingPage";
+import { useT } from "../i18n";
 
 const WELCOMED = "tamgabul.welcomed";
 
 export function AppSurface() {
   const page = useRoute();
+  const t = useT();
   const health = useResource((a) => a.health());
 
   // Rust asks us to open a page (tray "Settings", widget buttons).
@@ -53,17 +55,24 @@ export function AppSurface() {
 
   return (
     <div className="app" style={{ position: "relative" }}>
+      {page !== "welcome" && (
+        <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); document.getElementById("main")?.focus(); }}>
+          {t("a11y.skipToContent")}
+        </a>
+      )}
       <TitleBar onboarding={page === "welcome"} />
       {page === "welcome" ? (
         <OnboardingPage />
       ) : (
         <div className="app-body">
           <SideNav page={page} />
-          {page === "search" && <SearchPage />}
-          {page === "memory" && <MemoryPage />}
-          {page === "models" && <ModelsPage />}
-          {page === "folders" && <FoldersPage />}
-          {page === "settings" && <SettingsPage />}
+          <main id="main" className="app-main" tabIndex={-1} aria-label={t(`nav.${page}`)}>
+            {page === "search" && <SearchPage />}
+            {page === "memory" && <MemoryPage />}
+            {page === "models" && <ModelsPage />}
+            {page === "folders" && <FoldersPage />}
+            {page === "settings" && <SettingsPage />}
+          </main>
         </div>
       )}
     </div>
