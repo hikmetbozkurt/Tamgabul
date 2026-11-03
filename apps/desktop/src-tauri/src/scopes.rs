@@ -1,0 +1,650 @@
+//! Folder commands (P1, docs/07, docs/13): preview → grant → scan; revoke.
+//!
+//! Scans run on their own thread with their own SQLite connection, so the UI
+//! never waits on them. EmbeddingGemma 2 is held only for the duration of a
+//! scan; afterwards it follows its idle policy (ADR 019). Errors leaving here
+//! carry a code and a fixed hint, never a path.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tamgabul_core::db;
+use tamgabul_core::dto::{IndexStats, RevokeRequest, ScopePreview, ScopeStatus, ScopeSummary};
+use tamgabul_core::error::{ErrorCode, IpcError};
+use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Progress};
+use tamgabul_core::index::store::{self, GenerationSpec, Scope, ScopeState};
+use tamgabul_core::index::walk::{self, Limits};
+use tamgabul_core::model::{ModelCategory, ModelStatus};
+use tamgabul_core::registry::{self, ModelRecord};
+use tamgabul_runtime::client::Client;
+use tamgabul_runtime::{eg2, Lease};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+use crate::AppState;
+
+/// Files per folder scan (docs/07 caps). Preview stops earlier.
+pub const SCAN_CAP: usize = 200_000;
+const PREVIEW_CAP: usize = 10_000;
+const PREVIEW_TIME: Duration = Duration::from_secs(4);
+const PREVIEW_TTL: Duration = Duration::from_secs(15 * 60);
+const EMBED_BATCH: usize = 16;
+
+struct Preview {
+    canonical: PathBuf,
+    display: String,
+    is_drive_root: bool,
+    at: Instant,
+}
+
+#[derive(Default)]
+pub struct ScopesState {
+    previews: Mutex<HashMap<String, Preview>>,
+    jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    progress: Mutex<HashMap<String, Progress>>,
+}
+
+fn lock_err() -> IpcError {
+    IpcError::new(ErrorCode::Internal, "state lock poisoned")
+}
+
+fn no_db() -> IpcError {
+    IpcError::new(ErrorCode::DbMigrationFailed, "database unavailable")
+}
+
+fn with_db<T>(
+    state: &AppState,
+    f: impl FnOnce(&mut rusqlite::Connection) -> Result<T, IpcError>,
+) -> Result<T, IpcError> {
+    let mut g = state.db.lock().map_err(|_| lock_err())?;
+    f(g.as_mut().ok_or_else(no_db)?)
+}
+
+fn notify(app: &AppHandle) {
+    let _ = app.emit("scope_status", ());
+}
+
+/// Folders a scan never enters: the app's own data and model folders.
+fn deny_paths(state: &AppState, conn: &rusqlite::Connection) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(d) = &state.app_data_dir {
+        if let Ok(c) = walk::canonical(d) {
+            v.push(c);
+        }
+    }
+    for m in registry::active(conn).unwrap_or_default() {
+        let p = Path::new(&m.path);
+        let dir = if p.is_file() { p.parent() } else { Some(p) };
+        if let Some(c) = dir.and_then(|d| walk::canonical(d).ok()) {
+            v.push(c);
+        }
+    }
+    v
+}
+
+fn summary(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    all: &[Scope],
+    s: &Scope,
+) -> ScopeSummary {
+    let running = state
+        .scopes
+        .jobs
+        .lock()
+        .map(|j| j.contains_key(&s.scope_id))
+        .unwrap_or(false);
+    let prog = state
+        .scopes
+        .progress
+        .lock()
+        .ok()
+        .and_then(|p| p.get(&s.scope_id).copied());
+    let error_code: Option<ErrorCode> = s
+        .error_summary
+        .as_deref()
+        .and_then(|e| serde_json::from_value(serde_json::Value::String(e.into())).ok());
+    let status = match s.state {
+        ScopeState::Revoking | ScopeState::Revoked => ScopeStatus::Revoking,
+        _ if running => ScopeStatus::Scanning,
+        ScopeState::Paused => ScopeStatus::Paused,
+        _ if !s.canonical_path.exists() => ScopeStatus::Unreachable,
+        ScopeState::Error => ScopeStatus::Error,
+        _ if error_code.is_some() => ScopeStatus::Error,
+        _ => ScopeStatus::UpToDate,
+    };
+    ScopeSummary {
+        scope_id: s.scope_id.clone(),
+        display_path: s.display_path.clone(),
+        status,
+        watching: false,
+        file_count: Some(
+            prog.filter(|_| running)
+                .map(|p| p.processed)
+                .unwrap_or(s.file_count),
+        ),
+        last_scan_at: s.last_scan_at.clone(),
+        progress: prog.filter(|_| running).map(|p| {
+            if p.total == 0 {
+                0.0
+            } else {
+                p.processed as f64 / p.total as f64
+            }
+        }),
+        include_label: None,
+        exclusion_count: store::exclusion_count(conn, &s.scope_id).unwrap_or(0),
+        is_drive_root: s.is_drive_root,
+        parent_scope_id: store::parent_of(all, s).map(|p| p.scope_id.clone()),
+        error_code,
+    }
+}
+
+#[tauri::command]
+pub fn list_scopes(state: State<'_, AppState>) -> Result<Vec<ScopeSummary>, IpcError> {
+    with_db(&state, |conn| {
+        let all = store::visible_scopes(conn)?;
+        Ok(all.iter().map(|s| summary(&state, conn, &all, s)).collect())
+    })
+}
+
+#[tauri::command]
+pub fn index_stats(state: State<'_, AppState>) -> Result<IndexStats, IpcError> {
+    with_db(&state, |conn| {
+        let scopes = store::visible_scopes(conn)?
+            .iter()
+            .filter(|s| s.state.is_authorized())
+            .count() as u32;
+        let bytes: i64 = conn
+            .query_row(
+                "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        Ok(IndexStats {
+            scope_count: scopes,
+            file_count: Some(store::indexed_file_count(conn)?),
+            index_mb: Some(bytes as f64 / (1024.0 * 1024.0)),
+        })
+    })
+}
+
+// ---------------------------------------------------------------- preview / grant
+
+#[tauri::command]
+pub async fn preview_scope(app: AppHandle, path: String) -> Result<ScopePreview, IpcError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let raw = PathBuf::from(path.trim());
+        if walk::is_network_path(&raw) {
+            return Err(IpcError::new(
+                ErrorCode::ScopeNotAuthorized,
+                "network folders are not supported yet",
+            ));
+        }
+        let canonical = walk::canonical(&raw)?;
+        if !canonical.is_dir() {
+            return Err(IpcError::new(ErrorCode::ScopeNotAuthorized, "not a folder"));
+        }
+        let (deny, parent, existing) = with_db(&state, |conn| {
+            let all = store::visible_scopes(conn)?;
+            let existing = all
+                .iter()
+                .any(|s| s.state.is_authorized() && s.canonical_path == canonical);
+            let probe = Scope {
+                scope_id: String::new(),
+                canonical_path: canonical.clone(),
+                display_path: String::new(),
+                is_drive_root: false,
+                state: ScopeState::Active,
+                file_count: 0,
+                last_scan_at: None,
+                error_summary: None,
+                max_file_bytes: None,
+            };
+            let parent = store::parent_of(&all, &probe).map(|p| p.display_path.clone());
+            Ok((deny_paths(&state, conn), parent, existing))
+        })?;
+        if existing {
+            return Err(IpcError::new(
+                ErrorCode::ScopeNotAuthorized,
+                "folder already added",
+            ));
+        }
+        if deny.iter().any(|d| walk::is_within(&canonical, d)) {
+            return Err(IpcError::new(
+                ErrorCode::ScopeNotAuthorized,
+                "app data or model folder",
+            ));
+        }
+        let report = walk::walk(
+            &canonical,
+            &deny,
+            Limits {
+                max_files: PREVIEW_CAP,
+                deadline: Some(Instant::now() + PREVIEW_TIME),
+                ..Limits::default()
+            },
+            &AtomicBool::new(false),
+        );
+        let mut auto = report.excluded_names.clone();
+        if report.skipped_links > 0 {
+            auto.push("links / junctions".into());
+        }
+        if report.skipped_cloud > 0 {
+            auto.push("online-only files".into());
+        }
+        let token = store::new_id("t", &canonical.to_string_lossy());
+        let display = walk::display(&canonical);
+        let is_drive_root = walk::is_drive_root(&canonical);
+        {
+            let mut p = state.scopes.previews.lock().map_err(|_| lock_err())?;
+            p.retain(|_, v| v.at.elapsed() < PREVIEW_TTL);
+            p.insert(
+                token.clone(),
+                Preview {
+                    canonical,
+                    display: display.clone(),
+                    is_drive_root,
+                    at: Instant::now(),
+                },
+            );
+        }
+        // Text + FTS trigram + one 768-float vector per ~1000 characters.
+        let est = report.total_bytes as f64 * 3.0
+            + (report.total_bytes as f64 / 1000.0 + report.files.len() as f64) * 3072.0;
+        Ok(ScopePreview {
+            preview_token: token,
+            display_path: display,
+            is_drive_root,
+            file_count: report.files.len() as u32,
+            est_index_mb: est / (1024.0 * 1024.0),
+            cap_files: SCAN_CAP as u32,
+            auto_excludes: auto,
+            parent_display_path: parent,
+            complete: report.complete,
+        })
+    })
+    .await
+    .map_err(|_| IpcError::new(ErrorCode::Internal, "preview task failed"))?
+}
+
+#[tauri::command]
+pub fn grant_scope(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<ScopeSummary, IpcError> {
+    let p = state
+        .scopes
+        .previews
+        .lock()
+        .map_err(|_| lock_err())?
+        .remove(&token)
+        .filter(|p| p.at.elapsed() < PREVIEW_TTL)
+        .ok_or_else(|| {
+            IpcError::new(
+                ErrorCode::ScopeNotAuthorized,
+                "preview expired, preview again",
+            )
+        })?;
+    let scope = Scope {
+        scope_id: store::new_id("s", &p.canonical.to_string_lossy()),
+        canonical_path: p.canonical,
+        display_path: p.display,
+        is_drive_root: p.is_drive_root,
+        state: ScopeState::Active,
+        file_count: 0,
+        last_scan_at: None,
+        error_summary: None,
+        max_file_bytes: None,
+    };
+    let s = with_db(&state, |conn| {
+        store::insert_scope(conn, &scope)?;
+        let all = store::visible_scopes(conn)?;
+        Ok(summary(&state, conn, &all, &scope))
+    })?;
+    // The user confirmed "Allow and scan".
+    start_job(&app, &scope.scope_id)?;
+    notify(&app);
+    Ok(s)
+}
+
+#[tauri::command]
+pub fn start_index(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    scope_id: String,
+) -> Result<(), IpcError> {
+    with_db(&state, |conn| {
+        let s = store::get_scope(conn, &scope_id)?
+            .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
+        match s.state {
+            ScopeState::Active => Ok(()),
+            // "Scan now" on a paused folder resumes it.
+            ScopeState::Paused | ScopeState::Error => {
+                store::set_scope_state(conn, &scope_id, ScopeState::Active, None)
+            }
+            _ => Err(IpcError::new(ErrorCode::ScopeRevoked, "folder was removed")),
+        }
+    })?;
+    start_job(&app, &scope_id)?;
+    notify(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_index(state: State<'_, AppState>, scope_id: String) -> Result<(), IpcError> {
+    if let Some(c) = state
+        .scopes
+        .jobs
+        .lock()
+        .map_err(|_| lock_err())?
+        .get(&scope_id)
+    {
+        c.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_watching(scope_id: String, on: bool) -> Result<(), IpcError> {
+    let _ = scope_id;
+    if on {
+        // Automatic re-scans (idle sync, ADR 016) arrive later; scans are manual.
+        return Err(IpcError::new(
+            ErrorCode::NotImplemented,
+            "watching arrives later",
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn relink_scope(scope_id: String) -> Result<(), IpcError> {
+    let _ = scope_id;
+    Err(IpcError::new(
+        ErrorCode::NotImplemented,
+        "relink arrives later",
+    ))
+}
+
+// ---------------------------------------------------------------- revoke
+
+#[tauri::command]
+pub fn revoke_scope(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: RevokeRequest,
+) -> Result<(), IpcError> {
+    if let Some(c) = state
+        .scopes
+        .jobs
+        .lock()
+        .map_err(|_| lock_err())?
+        .get(&req.scope_id)
+    {
+        c.store(true, Ordering::SeqCst);
+    }
+    // Deny first, synchronously: from here on nothing of it is shown.
+    let purge = with_db(&state, |conn| {
+        store::begin_revoke(conn, &req.scope_id, req.mode, req.purge_history)
+    })?;
+    notify(&app);
+    if let Some(purge_id) = purge {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            run_purges(&app, vec![purge_id]);
+        });
+    }
+    Ok(())
+}
+
+fn run_purges(app: &AppHandle, ids: Vec<String>) {
+    let state = app.state::<AppState>();
+    let Some(path) = state.db_path.clone() else {
+        return;
+    };
+    let Ok(mut conn) = db::open_worker(&path) else {
+        return;
+    };
+    for id in ids {
+        if let Err(e) = store::run_purge(&mut conn, &id) {
+            eprintln!("purge failed: {:?}", e.code);
+        }
+    }
+    notify(app);
+}
+
+// ---------------------------------------------------------------- scan job
+
+/// EmbeddingGemma 2 through the lifecycle manager. The lease is taken on the
+/// first batch (the model starts then) and dropped with the embedder.
+struct Eg2Embedder {
+    app: AppHandle,
+    model_id: String,
+    lease: Option<Lease>,
+    client: Option<Client>,
+}
+
+impl Embedder for Eg2Embedder {
+    fn embed_documents(
+        &mut self,
+        title: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, IpcError> {
+        if self.client.is_none() {
+            let state = self.app.state::<AppState>();
+            let lease = state
+                .models
+                .acquire(&self.model_id)
+                .map_err(crate::models::ipc)?;
+            self.client = Some(Client::new(
+                lease.endpoint().clone(),
+                Duration::from_secs(180),
+            ));
+            self.lease = Some(lease);
+        }
+        let c = self.client.as_ref().expect("client set above");
+        let inputs: Vec<String> = texts
+            .iter()
+            .map(|t| eg2::document_prompt(Some(title), t))
+            .collect();
+        let mut out = c.embed_texts(&inputs).map_err(crate::models::ipc)?;
+        for v in &mut out {
+            if v.len() != eg2::NATIVE_DIM || !eg2::is_valid_vector(v) {
+                return Err(IpcError::new(ErrorCode::Internal, "invalid embedding"));
+            }
+            eg2::normalize(v);
+        }
+        Ok(out)
+    }
+}
+
+pub fn generation_spec(m: &ModelRecord) -> GenerationSpec {
+    GenerationSpec {
+        embedding_model_id: m.model_id.clone(),
+        model_hash: m.weights_sha256.clone().unwrap_or_else(|| "unknown".into()),
+        model_revision: m.model_revision.clone().unwrap_or_else(|| "local".into()),
+        adapter_version: format!("{} {}", m.runtime_adapter, m.adapter_version),
+        preprocessing: "text-chunk-v1 (1000/1600 chars, line provenance)".into(),
+        query_instruction: eg2::query_prompt(eg2::Task::SearchResult, "{query}"),
+        document_instruction: eg2::document_prompt(Some("{title}"), "{content}"),
+        dimension: eg2::NATIVE_DIM as u32,
+        normalization: "l2".into(),
+        modalities: vec!["text".into()],
+    }
+}
+
+fn set_error(app: &AppHandle, scope_id: &str, code: ErrorCode) {
+    let state = app.state::<AppState>();
+    let code = serde_json::to_value(code)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned));
+    let _ = with_db(&state, |conn| {
+        conn.execute(
+            "UPDATE source_scopes SET error_summary = ?2 WHERE scope_id = ?1",
+            rusqlite::params![scope_id, code],
+        )
+        .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))?;
+        Ok(())
+    });
+}
+
+fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome, IpcError> {
+    let state = app.state::<AppState>();
+    let path = state.db_path.clone().ok_or_else(no_db)?;
+    let mut conn = db::open_worker(&path)?;
+    let model = registry::active(&conn)?
+        .into_iter()
+        .find(|m| m.category == ModelCategory::Embedding)
+        .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available)
+        .ok_or_else(|| IpcError::new(ErrorCode::ModelMissing, "add EmbeddingGemma 2 first"))?;
+    if state.models.snapshot(&model.model_id).is_none() {
+        crate::models::attach(&state.models, &model);
+    }
+    let generation = store::ensure_current_generation(&mut conn, &generation_spec(&model))?;
+    let deny = deny_paths(&state, &conn);
+    let mut embedder = Eg2Embedder {
+        app: app.clone(),
+        model_id: model.model_id.clone(),
+        lease: None,
+        client: None,
+    };
+    let mut last = Instant::now();
+    let (outcome, _) = job::run(
+        &mut conn,
+        JobInput {
+            scope_id,
+            generation: &generation,
+            deny: &deny,
+            limits: Limits {
+                max_files: SCAN_CAP,
+                ..Limits::default()
+            },
+            batch: EMBED_BATCH,
+        },
+        &mut embedder,
+        cancel,
+        &mut |p| {
+            if let Ok(mut m) = state.scopes.progress.lock() {
+                m.insert(scope_id.to_string(), p);
+            }
+            if last.elapsed() > Duration::from_millis(400) {
+                notify(app);
+                last = Instant::now();
+            }
+        },
+    )?;
+    Ok(outcome)
+}
+
+/// Start a scan unless one is already running for this folder.
+pub fn start_job(app: &AppHandle, scope_id: &str) -> Result<(), IpcError> {
+    let state = app.state::<AppState>();
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut jobs = state.scopes.jobs.lock().map_err(|_| lock_err())?;
+        if jobs.contains_key(scope_id) {
+            return Ok(());
+        }
+        jobs.insert(scope_id.to_string(), cancel.clone());
+    }
+    let app = app.clone();
+    let id = scope_id.to_string();
+    std::thread::Builder::new()
+        .name("tamgabul-index".into())
+        .spawn(move || {
+            set_error_clear(&app, &id);
+            let result = scan(&app, &id, &cancel);
+            if let Err(e) = &result {
+                set_error(&app, &id, e.code);
+            }
+            let state = app.state::<AppState>();
+            if let Ok(mut j) = state.scopes.jobs.lock() {
+                j.remove(&id);
+            }
+            if let Ok(mut p) = state.scopes.progress.lock() {
+                p.remove(&id);
+            }
+            notify(&app);
+        })
+        .map_err(|_| IpcError::new(ErrorCode::Internal, "cannot start scan"))?;
+    Ok(())
+}
+
+fn set_error_clear(app: &AppHandle, scope_id: &str) {
+    let state = app.state::<AppState>();
+    let _ = with_db(&state, |conn| {
+        conn.execute(
+            "UPDATE source_scopes SET error_summary = NULL WHERE scope_id = ?1",
+            [scope_id],
+        )
+        .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))?;
+        Ok(())
+    });
+}
+
+/// App start: finish interrupted purges, then resume interrupted scans.
+pub fn resume(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let pending = with_db(&state, |conn| {
+        Ok((
+            store::pending_purges(conn)?,
+            store::interrupted_scopes(conn)?,
+        ))
+    });
+    let Ok((purges, scans)) = pending else { return };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if !purges.is_empty() {
+            run_purges(&app, purges);
+        }
+        for id in scans {
+            let _ = start_job(&app, &id);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tamgabul_core::dto::TtlPolicy;
+
+    #[test]
+    fn generation_identity_uses_model_card_prompts() {
+        let m = ModelRecord {
+            model_id: "m".into(),
+            category: ModelCategory::Embedding,
+            display_name: "EmbeddingGemma 2".into(),
+            provider: None,
+            path: "x".into(),
+            format: "gguf".into(),
+            architecture: None,
+            weights_sha256: Some("abc".into()),
+            model_revision: None,
+            license_name: None,
+            runtime_adapter: "llama.cpp".into(),
+            adapter_version: "b1".into(),
+            capabilities: vec![],
+            embedding_dim: Some(768),
+            status: ModelStatus::Available,
+            last_error_code: None,
+            validated_at: None,
+            ttl: TtlPolicy::Minutes5,
+        };
+        let g = generation_spec(&m);
+        assert_eq!(g.query_instruction, "task: search result | query: {query}");
+        assert_eq!(g.document_instruction, "title: {title} | text: {content}");
+        assert_eq!(g.dimension, 768);
+        let mut m2 = m.clone();
+        m2.adapter_version = "b2".into();
+        assert_eq!(
+            g.fingerprint(),
+            generation_spec(&m2).fingerprint(),
+            "runtime upgrade keeps the index"
+        );
+    }
+}

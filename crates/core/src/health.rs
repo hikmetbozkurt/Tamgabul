@@ -12,8 +12,8 @@ use crate::model::{ModelCategory, ModelStatus, StatusTone};
 pub enum HealthLevel {
     /// Semantic search usable.
     Ready,
-    /// App works, semantic search not usable yet (model on disk but not loaded,
-    /// or no folder granted).
+    /// App works, semantic search not usable yet (no folder granted, or the
+    /// embedding model is registered but not validated).
     Degraded,
     /// Mandatory embedding missing/invalid or DB unavailable.
     Blocked,
@@ -67,7 +67,8 @@ pub struct HealthInputs {
 
 pub fn derive_health(inputs: HealthInputs) -> AppHealth {
     let emb = inputs.embedding.status;
-    let semantic = inputs.db_ok && emb.is_loaded();
+    // Validated is enough: the worker starts on the first query (ADR 019).
+    let semantic = inputs.db_ok && emb.is_usable();
 
     let level = if !inputs.db_ok || inputs.embedding.tone == StatusTone::Red {
         HealthLevel::Blocked
@@ -112,8 +113,15 @@ mod tests {
     }
 
     #[test]
-    fn available_embedding_is_degraded_not_ready() {
+    fn available_embedding_with_scope_is_ready_and_loads_on_demand() {
         let h = derive_health(inputs(ModelStatus::Available, 3, true));
+        assert_eq!(h.level, HealthLevel::Ready);
+        assert!(h.semantic_search_enabled);
+    }
+
+    #[test]
+    fn registered_but_unvalidated_embedding_is_not_searchable() {
+        let h = derive_health(inputs(ModelStatus::Registered, 3, true));
         assert_eq!(h.level, HealthLevel::Degraded);
         assert!(!h.semantic_search_enabled);
     }

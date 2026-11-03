@@ -12,6 +12,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 rusqlite.workspace = true
 ts-rs.workspace = true
+blake3 = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

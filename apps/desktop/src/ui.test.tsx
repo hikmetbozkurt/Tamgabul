@@ -41,10 +41,16 @@ describe("app surface without a model", () => {
     expect(screen.getAllByText("Not installed").length).toBeGreaterThanOrEqual(3);
   });
 
-  it.each(["#/folders", "#/memory"])("%s says the backend is not available yet", async (hash) => {
+  it("#/memory says the backend is not available yet", async () => {
     sessionStorage.setItem("tamgabul.welcomed", "1");
-    renderApp(hash);
+    renderApp("#/memory");
     expect(await screen.findByText("Not available yet")).toBeTruthy();
+  });
+
+  it("#/folders shows the real (empty) folder list", async () => {
+    sessionStorage.setItem("tamgabul.welcomed", "1");
+    renderApp("#/folders");
+    expect(await screen.findByText("No folders yet")).toBeTruthy();
   });
 
   it("switches to Turkish from settings", async () => {

@@ -3,6 +3,8 @@
 
 mod commands;
 mod hotkey;
+mod models;
+mod scopes;
 mod tray;
 mod windows;
 
@@ -23,6 +25,13 @@ pub struct AppState {
     /// Single lifecycle authority for model workers (docs/05). Nothing is
     /// started here: workers launch on demand and stop when idle.
     pub models: Arc<ModelManager>,
+    /// Add-model validation in progress / waiting for Save.
+    pub model_ops: models::ModelsState,
+    /// Database file, for background jobs that open their own connection.
+    pub db_path: Option<std::path::PathBuf>,
+    /// Never scanned as a folder (docs/07).
+    pub app_data_dir: Option<std::path::PathBuf>,
+    pub scopes: scopes::ScopesState,
 }
 
 /// `model_status` event payload. No paths, no model input.
@@ -57,9 +66,9 @@ pub fn stop_models(app: &AppHandle) {
     }
 }
 
-fn open_db(app: &tauri::App) -> Option<Connection> {
-    let dir = app.path().app_data_dir().ok()?;
-    std::fs::create_dir_all(&dir).ok()?;
+fn open_db(dir: Option<&std::path::Path>) -> Option<Connection> {
+    let dir = dir?;
+    std::fs::create_dir_all(dir).ok()?;
     match db::open_and_migrate(&dir.join("tamgabul.db")) {
         Ok(conn) => Some(conn),
         Err(e) => {
@@ -90,7 +99,12 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
-            let conn = open_db(app);
+            let data_dir = app.path().app_data_dir().ok();
+            let conn = open_db(data_dir.as_deref());
+            let db_path = conn
+                .as_ref()
+                .and(data_dir.as_ref())
+                .map(|d| d.join("tamgabul.db"));
             let loaded = conn
                 .as_ref()
                 .and_then(|c| settings::load(c).ok())
@@ -102,7 +116,15 @@ fn main() {
                 models: Arc::new(ModelManager::new(Some(model_listener(
                     app.handle().clone(),
                 )))),
+                model_ops: models::ModelsState::default(),
+                db_path,
+                app_data_dir: data_dir,
+                scopes: scopes::ScopesState::default(),
             });
+            // Make registered models known to the manager. Nothing is loaded.
+            models::init(&app.state::<AppState>());
+            // Finish interrupted purges first, then resume interrupted scans.
+            scopes::resume(app.handle());
 
             let active = hotkey::register(app.handle(), &loaded.hotkey).is_ok();
             *app.state::<AppState>().hotkey_active.lock().unwrap() = active;
@@ -122,6 +144,24 @@ fn main() {
             commands::hide_window,
             commands::quit_app,
             commands::not_implemented,
+            models::list_models,
+            models::validate_model,
+            models::cancel_validation,
+            models::register_model,
+            models::load_model,
+            models::unload_model,
+            models::unload_all_models,
+            models::set_model_ttl,
+            models::remove_model,
+            scopes::list_scopes,
+            scopes::index_stats,
+            scopes::preview_scope,
+            scopes::grant_scope,
+            scopes::start_index,
+            scopes::cancel_index,
+            scopes::set_watching,
+            scopes::relink_scope,
+            scopes::revoke_scope,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tamgabul")

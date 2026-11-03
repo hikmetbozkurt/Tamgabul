@@ -36,6 +36,9 @@ fn db_err(e: impl std::fmt::Display) -> IpcError {
 fn configure(conn: &Connection) -> Result<(), IpcError> {
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(db_err)?;
+    // The UI connection and background jobs write concurrently (WAL).
+    conn.busy_timeout(std::time::Duration::from_secs(10))
+        .map_err(db_err)?;
     let _: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
         .map_err(db_err)?;
@@ -109,6 +112,13 @@ pub fn open_and_migrate(db_path: &Path) -> Result<Connection, IpcError> {
         std::fs::copy(db_path, backup_path(db_path, from)).map_err(db_err)?;
     }
     migrate(&mut conn, MIGRATIONS)?;
+    Ok(conn)
+}
+
+/// Extra connection for a background job on an already-migrated database.
+pub fn open_worker(db_path: &Path) -> Result<Connection, IpcError> {
+    let conn = Connection::open(db_path).map_err(db_err)?;
+    configure(&conn)?;
     Ok(conn)
 }
 

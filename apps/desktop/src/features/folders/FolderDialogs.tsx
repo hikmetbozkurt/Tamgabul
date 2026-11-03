@@ -77,7 +77,7 @@ export function AddFolderDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
     >
       <div className="preview-stats">
-        <div><div className="k">{t("folders.found")}</div><div className="v">{t("folders.files", { n: preview.file_count, count: formatNumber(preview.file_count, lang) })}</div></div>
+        <div><div className="k">{t("folders.found")}</div><div className="v">{t("folders.files", { n: preview.file_count, count: formatNumber(preview.file_count, lang) + (preview.complete ? "" : "+") })}</div></div>
         <div><div className="k">{t("folders.estIndex")}</div><div className="v">{formatMb(preview.est_index_mb, lang)}</div></div>
         <div><div className="k">{t("folders.cap")}</div><div className="v">{formatNumber(preview.cap_files, lang)}</div></div>
       </div>

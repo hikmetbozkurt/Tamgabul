@@ -1,11 +1,24 @@
-// The real Rust core. Health is live today; the rest of the contract answers
-// NOT_IMPLEMENTED until its backend phase lands (P1 scopes, P2 search,
-// P3 history, P4 models). The UI renders that state honestly.
+// The real Rust core. Health, models (P4) and folders (P1) are live; search
+// (P2) and history (P3) answer NOT_IMPLEMENTED until their phase lands. The
+// UI renders that state honestly.
+import { Channel } from "@tauri-apps/api/core";
 import type { Api } from "./api";
 import { call, isTauri, on } from "./bridge";
 import type { AppHealth } from "../bindings/AppHealth";
 import type { IpcError } from "../bindings/IpcError";
 import type { ModelEntry } from "../bindings/ModelEntry";
+import type { IndexStats } from "../bindings/IndexStats";
+import type { RegisterModelRequest } from "../bindings/RegisterModelRequest";
+import type { RevokeRequest } from "../bindings/RevokeRequest";
+import type { ScopePreview } from "../bindings/ScopePreview";
+import type { ScopeSummary } from "../bindings/ScopeSummary";
+import type { TtlPolicy } from "../bindings/TtlPolicy";
+import type { ValidationStep } from "../bindings/ValidationStep";
+
+const noCore = (command: string): IpcError => ({
+  code: "NOT_IMPLEMENTED",
+  detail: `${command} (no desktop core in browser)`,
+});
 
 const notYet = async (command: string): Promise<never> => {
   if (!isTauri()) {
@@ -20,7 +33,10 @@ export class CoreApi implements Api {
   private unlisten: Array<() => void> = [];
 
   constructor() {
-    on("tray_action", () => this.listeners.forEach((l) => l())).then((u) => this.unlisten.push(u));
+    const notify = () => this.listeners.forEach((l) => l());
+    for (const ev of ["tray_action", "model_status", "scope_status"]) {
+      on(ev, notify).then((u) => this.unlisten.push(u));
+    }
   }
   dispose() { this.unlisten.forEach((u) => u()); }
 
@@ -38,35 +54,109 @@ export class CoreApi implements Api {
     return call<AppHealth>("get_app_health");
   }
 
-  /** Until P4 the registry has no runtime data; show the four slots from health. */
   async listModels(): Promise<ModelEntry[]> {
-    const h = await this.health();
-    return h.models
-      .filter((m) => m.status !== "MISSING")
-      .map((m) => ({
-        model_id: `db-${m.category}`, category: m.category, display_name: m.display_name ?? m.category,
-        source_label: null, status: m.status, tone: m.tone, required: m.required, runtime: null,
-        dimension: null, memory_mb: null, validated_at: null, ttl: "minutes10", error_code: null, error_key: null,
-      }));
+    if (!isTauri()) return [];
+    return call<ModelEntry[]>("list_models");
   }
 
-  loadModel = () => notYet("load_model");
-  unloadModel = () => notYet("unload_model");
-  unloadAll = () => notYet("unload_model");
-  setTtl = () => notYet("set_model_policy");
-  removeModel = () => notYet("remove_model");
-  validateModel = () => notYet("validate_model");
-  registerModel = () => notYet("register_model");
+  async loadModel(modelId: string) {
+    if (!isTauri()) throw noCore("load_model");
+    await call("load_model", { modelId });
+    this.listeners.forEach((l) => l());
+  }
 
-  listScopes = () => notYet("list_scopes");
-  indexStats = () => notYet("list_scopes");
-  previewScope = () => notYet("preview_scope");
-  grantScope = () => notYet("grant_scope");
-  setWatching = () => notYet("pause_scope");
-  startIndex = () => notYet("start_index_job");
-  cancelIndex = () => notYet("cancel_job");
-  revokeScope = () => notYet("revoke_scope");
-  relinkScope = () => notYet("relink_scope");
+  async unloadModel(modelId: string) {
+    if (!isTauri()) throw noCore("unload_model");
+    await call("unload_model", { modelId });
+  }
+
+  async unloadAll() {
+    if (!isTauri()) throw noCore("unload_all_models");
+    await call("unload_all_models");
+  }
+
+  async setTtl(modelId: string, ttl: TtlPolicy) {
+    if (!isTauri()) throw noCore("set_model_ttl");
+    await call("set_model_ttl", { modelId, ttl });
+    this.listeners.forEach((l) => l());
+  }
+
+  async removeModel(modelId: string) {
+    if (!isTauri()) throw noCore("remove_model");
+    await call("remove_model", { modelId });
+    this.listeners.forEach((l) => l());
+  }
+
+  async validateModel(req: RegisterModelRequest, onStep: (s: ValidationStep[]) => void, signal: AbortSignal) {
+    if (!isTauri()) throw noCore("validate_model");
+    const ch = new Channel<ValidationStep[]>();
+    ch.onmessage = (steps) => { if (!signal.aborted) onStep(steps); };
+    const abort = () => { call("cancel_validation").catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      return await call<boolean>("validate_model", { req, onStep: ch });
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async registerModel(req: RegisterModelRequest) {
+    if (!isTauri()) throw noCore("register_model");
+    const m = await call<ModelEntry>("register_model", { req });
+    this.listeners.forEach((l) => l());
+    return m;
+  }
+
+  private changed() { this.listeners.forEach((l) => l()); }
+
+  async listScopes(): Promise<ScopeSummary[]> {
+    if (!isTauri()) return [];
+    return call<ScopeSummary[]>("list_scopes");
+  }
+
+  async indexStats(): Promise<IndexStats> {
+    if (!isTauri()) return { scope_count: 0, file_count: null, index_mb: null };
+    return call<IndexStats>("index_stats");
+  }
+
+  async previewScope(path: string): Promise<ScopePreview> {
+    if (!isTauri()) throw noCore("preview_scope");
+    return call<ScopePreview>("preview_scope", { path });
+  }
+
+  async grantScope(token: string): Promise<ScopeSummary> {
+    if (!isTauri()) throw noCore("grant_scope");
+    const s = await call<ScopeSummary>("grant_scope", { token });
+    this.changed();
+    return s;
+  }
+
+  async setWatching(scopeId: string, on: boolean) {
+    if (!isTauri()) throw noCore("set_watching");
+    await call("set_watching", { scopeId, on });
+  }
+
+  async startIndex(scopeId: string) {
+    if (!isTauri()) throw noCore("start_index");
+    await call("start_index", { scopeId });
+    this.changed();
+  }
+
+  async cancelIndex(scopeId: string) {
+    if (!isTauri()) throw noCore("cancel_index");
+    await call("cancel_index", { scopeId });
+  }
+
+  async revokeScope(req: RevokeRequest) {
+    if (!isTauri()) throw noCore("revoke_scope");
+    await call("revoke_scope", { req });
+    this.changed();
+  }
+
+  async relinkScope(scopeId: string) {
+    if (!isTauri()) throw noCore("relink_scope");
+    await call("relink_scope", { scopeId });
+  }
 
   search = () => notYet("submit_utterance");
   preview = () => notYet("preview_result");

@@ -14,7 +14,7 @@ import { toIpcError } from "../../ipc/bridge";
 import { clearHashFlags, hashFlag } from "../../shell/router";
 import { AddModelDialog } from "./AddModelDialog";
 
-const TTLS: TtlPolicy[] = ["minutes5", "minutes10", "minutes30", "hours1", "never"];
+const TTLS: TtlPolicy[] = ["immediately", "minutes5", "minutes10", "minutes30", "hours1", "never"];
 
 export function ModelsPage() {
   const { t, lang } = useI18n();
@@ -48,9 +48,12 @@ export function ModelsPage() {
     }
     const busy = ["LOADING", "UNLOADING", "VALIDATING"].includes(m.status);
     if (busy) return <span className="status"><span className="spinner" />{t(statusKey(m.status, m.required))}</span>;
-    if (m.status === "INCOMPATIBLE" || m.status === "ERROR") {
+    if (m.status === "INCOMPATIBLE" || m.status === "ERROR" || m.status === "MISSING") {
       return (
         <>
+          {m.status === "ERROR" && (
+            <button type="button" className={`${cls} btn-primary`} onClick={() => act(api.loadModel(m.model_id))}>{t("common.retry")}</button>
+          )}
           <button type="button" className={cls} onClick={() => setAdding(c)}>{t("models.replace")}</button>
           <button type="button" className={`${cls} btn-danger`} onClick={() => act(api.removeModel(m.model_id))}>{t("models.remove")}</button>
         </>
@@ -102,6 +105,9 @@ export function ModelsPage() {
                 </div>
                 <Pill tone={emb?.tone ?? "red"} large>{t(statusKey(emb?.status ?? "MISSING", true))}</Pill>
               </div>
+              {emb && (emb.error_key || emb.error_code) && (
+                <div className="note err"><Icon name="warn" size={18} /><span>{t(emb.error_key ?? `error.${emb.error_code}.body`)}</span></div>
+              )}
               {emb && (
                 <div className="facts">
                   <div><div className="k">{t("models.runtime")}</div><div className="v">{emb.runtime ?? t("models.notVerified")}</div></div>

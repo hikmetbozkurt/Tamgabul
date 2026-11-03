@@ -18,6 +18,7 @@ const STATUS_TONE: Record<ScopeSummary["status"], StatusTone> = {
   revoking: "amber",
   paused: "neutral",
   unreachable: "red",
+  error: "red",
 };
 
 export function FoldersPage() {
@@ -40,7 +41,11 @@ export function FoldersPage() {
   const pathOf = (id: string | null) => list.find((s) => s.scope_id === id)?.display_path ?? null;
 
   const metaLine = (s: ScopeSummary) => {
-    const bits = [s.status === "unreachable" ? t("folders.unreachableMeta") : s.watching ? t("folders.watching") : t("folders.notWatching")];
+    const bits = [
+      s.status === "unreachable" ? t("folders.unreachableMeta")
+        : s.status === "error" && s.error_code ? t(`error.${s.error_code}.title`)
+        : s.watching ? t("folders.watching") : t("folders.notWatching"),
+    ];
     if (s.file_count != null) bits.push(t("folders.files", { n: s.file_count, count: formatNumber(s.file_count, lang) }));
     if (s.include_label) bits.push(s.include_label);
     else if (s.last_scan_at) bits.push(t("folders.lastScan", { when: relativeTime(s.last_scan_at, lang) }));
@@ -110,7 +115,7 @@ export function FoldersPage() {
                     {s.status === "unreachable" ? (
                       <button type="button" className="btn btn-sm" onClick={() => act(api.relinkScope(s.scope_id))}>{t("folders.relink")}</button>
                     ) : (
-                      <Toggle checked={s.watching} disabled={s.status === "revoking"} label={t("folders.watchLabel", { path: s.display_path })} onChange={(v) => act(api.setWatching(s.scope_id, v))} />
+                      <Toggle checked={s.watching} disabled label={t("folders.watchLabel", { path: s.display_path })} onChange={(v) => act(api.setWatching(s.scope_id, v))} />
                     )}
                     <button
                       type="button"

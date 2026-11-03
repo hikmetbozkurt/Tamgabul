@@ -1,15 +1,17 @@
 //! Tamgabul core library.
 //!
-//! P0-01 scope only: model status vocabulary, app health derivation, typed IPC
-//! DTOs and the SQLite migration harness. No model runtime, indexing or
-//! retrieval is implemented here yet — see `agent_tasks/` for later phases.
+//! Model status vocabulary, app health derivation, typed IPC DTOs, the SQLite
+//! migration harness and the model registry. The model runtime lives in
+//! `tamgabul-runtime`; indexing and retrieval arrive in later phases.
 
 pub mod db;
 pub mod dto;
 pub mod error;
 pub mod health;
+pub mod index;
 pub mod ipc;
 pub mod model;
+pub mod registry;
 pub mod settings;
 
 /// Version of the UI <-> Rust IPC contract (docs/13_API_CONTRACTS.md).

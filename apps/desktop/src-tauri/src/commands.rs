@@ -1,6 +1,5 @@
 //! Typed IPC commands (docs/13). Each returns `Result<_, IpcError>`.
 
-use tamgabul_core::db;
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::health::AppHealth;
 use tamgabul_core::ipc::{self, PingRequest, PingResponse};
@@ -23,8 +22,7 @@ pub fn ping(request: PingRequest) -> PingResponse {
 
 #[tauri::command]
 pub fn get_app_health(state: State<'_, AppState>) -> Result<AppHealth, IpcError> {
-    let guard = state.db.lock().map_err(|_| lock_err())?;
-    Ok(db::read_health(guard.as_ref()))
+    crate::models::health(&state)
 }
 
 fn snapshot(state: &AppState) -> Result<SettingsSnapshot, IpcError> {

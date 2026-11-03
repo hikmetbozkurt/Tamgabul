@@ -33,8 +33,13 @@ describe("deriveHealth", () => {
     expect(h.level).toBe("blocked");
     expect(h.models).toHaveLength(4);
   });
-  it("embedding on disk → degraded, search off", () => {
+  it("validated embedding on disk + folder → ready (loads on demand)", () => {
     const h = deriveHealth([entry("embedding", "AVAILABLE")], 2);
+    expect(h.level).toBe("ready");
+    expect(h.semantic_search_enabled).toBe(true);
+  });
+  it("registered but not validated → degraded, search off", () => {
+    const h = deriveHealth([entry("embedding", "REGISTERED")], 2);
     expect(h.level).toBe("degraded");
     expect(h.semantic_search_enabled).toBe(false);
   });

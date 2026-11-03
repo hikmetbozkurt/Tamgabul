@@ -83,7 +83,9 @@ ts_export! {
 
 ts_export! {
     #[serde(rename_all = "snake_case")]
-    pub enum TtlPolicy { Never, Minutes5, Minutes10, Minutes30, Hours1 }
+    /// How long a loaded model may stay idle. `Never` = keep loaded (opt-in),
+    /// `Immediately` = stop right after each job (docs/05).
+    pub enum TtlPolicy { Immediately, Minutes5, Minutes10, Minutes30, Hours1, Never }
 
     #[serde(rename_all = "snake_case")]
     pub enum StepState { Pending, Running, Ok, Failed }
@@ -125,7 +127,7 @@ ts_export! {
 
 ts_export! {
     #[serde(rename_all = "snake_case")]
-    pub enum ScopeStatus { UpToDate, Scanning, Paused, Unreachable, Revoking }
+    pub enum ScopeStatus { UpToDate, Scanning, Paused, Unreachable, Revoking, Error }
 
     #[serde(rename_all = "snake_case")]
     pub enum RevokeMode {
@@ -152,6 +154,8 @@ ts_export! {
         pub exclusion_count: u32,
         pub is_drive_root: bool,
         pub parent_scope_id: Option<String>,
+        /// Why the last scan stopped (status `error`); the index stays searchable.
+        pub error_code: Option<ErrorCode>,
     }
 
     pub struct IndexStats {
@@ -169,6 +173,8 @@ ts_export! {
         pub cap_files: u32,
         pub auto_excludes: Vec<String>,
         pub parent_display_path: Option<String>,
+        /// False when the preview hit its file/time cap: `file_count` is a minimum.
+        pub complete: bool,
     }
 
     pub struct RevokeRequest {

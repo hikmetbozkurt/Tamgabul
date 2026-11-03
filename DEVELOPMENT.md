@@ -36,6 +36,12 @@ Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
 - `C:\AI\models\gemma-4-e4b\` → Gemma 4 E4B `Q4_K_M` GGUF (isteğe bağlı)
 Çalıştırıcı: llama.cpp `llama-server` (winget: `ggml.llamacpp`). Uygulama onu **sadece iş gelince** başlatır, işi bitince 5 dk boşta kalırsa kapatır; Quit/tepsi "Unload Models" hemen kapatır. Kapatmak = süreç biter, RAM/VRAM işletim sistemine döner.
 
+### Modeli uygulamaya ekleme (P4)
+`npm run tauri dev` → Models → Add model → Embedding → `C:\AI\models\embeddinggemma-2` klasöründeki `.gguf` dosyasını seç. Uygulama 5 adımı kontrol eder (dosya, format, SHA-256, llama-server, kısa deneme) → Save. Durum "On disk" olur; ilk aramada ya da "Load" ile açılır, boşta kalınca kapanır (süre modelin kartından seçilir).
+
+### Klasör ekleme (P1)
+Folders → Add folder → klasör seç → önizleme (dosya sayısı, tahmini boyut, otomatik hariç tutulanlar) → "Allow and scan". Şimdilik `.md` ve `.txt` dosyaları okunur; dosyalar asla değiştirilmez. Tarama sırasında EmbeddingGemma 2 açılır, bitince boşta kalma süresine göre kapanır. "Remove & purge" klasörü aramadan hemen çıkarır ve indeksini siler.
+
 ### P0-02 testi (EmbeddingGemma 2)
 ```powershell
 # repo kökünde

@@ -27,7 +27,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Tray actions and model lifecycle changes are done by the Rust core;
   // the UI only re-reads state.
   useEffect(() => {
-    const subs = [on<string>("tray_action", refresh), on("model_status", refresh)];
+    const subs = ["tray_action", "model_status", "scope_status"].map((ev) => on(ev, refresh));
     return () => { subs.forEach((p) => p.then((u) => u())); };
   }, [refresh]);
 

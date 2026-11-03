@@ -75,6 +75,20 @@ impl ModelStatus {
         )
     }
 
+    /// Validated and on disk, loaded or not. Models start on demand (ADR 019),
+    /// so an AVAILABLE embedding model can serve the next query.
+    pub fn is_usable(self) -> bool {
+        matches!(
+            self,
+            ModelStatus::Available
+                | ModelStatus::Loading
+                | ModelStatus::Ready
+                | ModelStatus::Busy
+                | ModelStatus::Idle
+                | ModelStatus::Unloading
+        )
+    }
+
     /// Persisted status is only a snapshot. After restart nothing is loaded,
     /// so live states fall back to AVAILABLE until a runner health check
     /// passes (docs/12 "Storage boundaries", J10).

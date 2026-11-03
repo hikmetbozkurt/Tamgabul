@@ -18,6 +18,9 @@ export const _exhaustive: Unlisted extends never ? true : never = true;
 export const CATEGORIES: ModelCategory[] = ["embedding", "llm", "stt", "tts"];
 
 export const isLoaded = (s: ModelStatus) => s === "READY" || s === "BUSY" || s === "IDLE";
+/** Validated and on disk; the model starts on demand (ADR 019). */
+export const isUsable = (s: ModelStatus) =>
+  isLoaded(s) || s === "AVAILABLE" || s === "LOADING" || s === "UNLOADING";
 
 export function toneOf(status: ModelStatus, category: ModelCategory): StatusTone {
   if (isLoaded(status)) return "green";
@@ -47,7 +50,7 @@ export function deriveHealth(models: ModelEntry[], activeScopes: number): AppHea
     };
   });
   const emb = summaries[0];
-  const semantic = isLoaded(emb.status);
+  const semantic = isUsable(emb.status);
   const level = emb.tone === "red" ? "blocked" : semantic && activeScopes > 0 ? "ready" : "degraded";
   return {
     api_version: 1,
