@@ -33,7 +33,8 @@ Arayüz yalnızca Rust çekirdeğinden gelen **gerçek** durumu gösterir; sahte
 ## Modeller
 Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
 - `C:\AI\models\embeddinggemma-2\` → `ggml-org/embeddinggemma-2-GGUF`: `embeddinggemma-2-BF16.gguf` (metin, zorunlu) + `mmproj-embeddinggemma-2-BF16.gguf` (görüntü + ses)
-- `C:\AI\models\gemma-4-e4b\` → Gemma 4 E4B `Q4_K_M` GGUF (isteğe bağlı)
+- `C:\AI\models\gemma-4-e2b-it\` → `ggml-org/gemma-4-E2B-it-GGUF`: `gemma-4-E2B-it-Q4_0.gguf` + `mmproj-gemma-4-E2B-it-Q8_0.gguf` (isteğe bağlı LLM: istek anlama, sonuç seçimi, görsel açıklamaları)
+- İndirme komutları ve SHA-256 değerleri: [`README.tr.md`](README.tr.md#2-modelleri-indir)
 Çalıştırıcı: llama.cpp `llama-server` (winget: `ggml.llamacpp`). Uygulama onu **sadece iş gelince** başlatır, işi bitince 5 dk boşta kalırsa kapatır; Quit/tepsi "Unload Models" hemen kapatır. Kapatmak = süreç biter, RAM/VRAM işletim sistemine döner.
 
 ### Modeli uygulamaya ekleme (P4)
