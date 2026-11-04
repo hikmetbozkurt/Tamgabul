@@ -1461,3 +1461,52 @@ fn watching_is_stored_per_folder() {
     assert!(store::watched_scopes(&e.conn).unwrap().is_empty());
     assert!(store::set_watching(&e.conn, "s-nope", true).is_err());
 }
+
+#[test]
+fn images_without_text_get_one_sideways_ocr_retry() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    // First scan without OS services: images have no OCR text.
+    let generation = e.generation.clone();
+    job::run(
+        &mut e.conn,
+        JobInput {
+            scope_id: &s.scope_id,
+            generation: &generation,
+            deny: &[],
+            limits: Limits::default(),
+            batch: 8,
+            platform: &NoPlatform,
+        },
+        &mut FakeEmbedder::new(),
+        &mut NoDescriber,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    // With OCR available, those images are read once more…
+    let (_, p) = scan(&mut e, &s, &mut FakeEmbedder::new());
+    assert!(p.indexed >= 1, "{p:?}");
+    // …and only once.
+    let (_, p) = scan(&mut e, &s, &mut FakeEmbedder::new());
+    assert_eq!(p.indexed, 0, "{p:?}");
+}
+
+#[test]
+fn a_filter_that_hides_everything_is_relaxed_and_said_so() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    let none = FakeModels {
+        llm: false,
+        pick: serde_json::Value::Null,
+    };
+    // "toplantı" is only in a .txt file; the user asked for a PDF.
+    let out = ask(&e, &none, "toplantı notları pdf", None);
+    assert_eq!(out.found[0].resolved.card.title, "notes.txt");
+    assert_eq!(out.notice.as_deref(), Some("filters_relaxed"));
+    // When the filter matches, nothing is relaxed.
+    let out = ask(&e, &none, "budget pdf", None);
+    assert_eq!(out.found[0].resolved.card.title, "report.pdf");
+    assert!(out.notice.is_none());
+}

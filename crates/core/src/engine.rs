@@ -223,23 +223,33 @@ pub fn run(
     // 3. Retrieve.
     let filter = DocFilter::new(&plan.filters, q.now, q.utc_offset);
     let browse = plan.is_browse();
+    let pool = if llm_out.is_some() {
+        PICK_POOL
+    } else {
+        RESULT_LIMIT
+    };
     let hits = if browse {
         search::browse(conn, &filter, RESULT_LIMIT)?
     } else {
-        search::search_terms(
-            conn,
-            generation,
-            qv.as_deref(),
-            &plan.terms,
-            &filter,
-            if llm_out.is_some() {
-                PICK_POOL
-            } else {
-                RESULT_LIMIT
-            },
-        )?
+        search::search_terms(conn, generation, qv.as_deref(), &plan.terms, &filter, pool)?
     };
     let mut found = resolve_all(conn, &acl, hits, &plan.terms)?;
+    // Nothing of that type / date: rather than "not found", show the best
+    // matches without those filters and say so.
+    let typed = filter.types.is_some() || filter.window.is_some();
+    if found.is_empty() && !browse && typed {
+        let loose = DocFilter {
+            types: None,
+            window: None,
+            exclude: filter.exclude.clone(),
+        };
+        let hits =
+            search::search_terms(conn, generation, qv.as_deref(), &plan.terms, &loose, pool)?;
+        found = resolve_all(conn, &acl, hits, &plan.terms)?;
+        if !found.is_empty() {
+            out.notice = Some("filters_relaxed".into());
+        }
+    }
 
     // 4. Pick (and summarize).
     let mode = if plan.summarize {

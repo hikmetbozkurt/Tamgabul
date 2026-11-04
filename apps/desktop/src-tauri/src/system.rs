@@ -139,6 +139,33 @@ fn diagnostics(app: &AppHandle) -> Result<Value, IpcError> {
         Some(rows)
     });
 
+    // What each kind of file was indexed into (captions, OCR, vectors).
+    let chunks = state.db_path.as_deref().and_then(|p| {
+        let conn = tamgabul_core::db::open_worker(p).ok()?;
+        let mut st = conn
+            .prepare(
+                "SELECT d.file_type, c.modality, COUNT(*), COUNT(DISTINCT c.document_id),
+                        SUM(EXISTS(SELECT 1 FROM embedding_records e WHERE e.chunk_id = c.chunk_id))
+                 FROM chunks c JOIN documents d ON d.document_id = c.document_id
+                 GROUP BY 1, 2 ORDER BY 1, 2",
+            )
+            .ok()?;
+        let rows: Vec<Value> = st
+            .query_map([], |r| {
+                Ok(json!({
+                    "type": r.get::<_, String>(0)?,
+                    "modality": r.get::<_, String>(1)?,
+                    "chunks": r.get::<_, i64>(2)?,
+                    "files": r.get::<_, i64>(3)?,
+                    "with_vector": r.get::<_, i64>(4)?,
+                }))
+            })
+            .ok()?
+            .filter_map(Result::ok)
+            .collect();
+        Some(rows)
+    });
+
     Ok(json!({
         "tamgabul_diagnostics": 1,
         "note": "No file paths, file names, queries or conversation text are included.",
@@ -158,6 +185,11 @@ fn diagnostics(app: &AppHandle) -> Result<Value, IpcError> {
         "models": models,
         "folders": scopes,
         "documents": docs,
+        "chunks": chunks,
+        "generation": state.db_path.as_deref().and_then(|p| {
+            let conn = tamgabul_core::db::open_worker(p).ok()?;
+            tamgabul_core::index::store::current_generation(&conn).ok().flatten().map(|(id, _)| id)
+        }),
     }))
 }
 

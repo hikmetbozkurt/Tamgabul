@@ -486,5 +486,6 @@
   "understood.type.video": "Videolar",
   "folders.relinkPick": "“{path}” şimdi nerede?",
   "folders.relinkedToast": "Klasör yeniden bağlandı. Yalnızca değişen dosyalar yeniden taranacak.",
-  "folders.relinkMismatch": "Bu klasörde indekslenmiş dosyalar yok, bu yüzden bağlanmadı."
+  "folders.relinkMismatch": "Bu klasörde indekslenmiş dosyalar yok, bu yüzden bağlanmadı.",
+  "search.notice.filters_relaxed": "O dosya türü ya da tarihle eşleşen bir şey yoktu; bunlar o süzgeç olmadan en iyi eşleşmeler."
 }

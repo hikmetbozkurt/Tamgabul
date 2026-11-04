@@ -609,11 +609,30 @@ pub fn plan(text: &str, llm: Option<&LlmPlan>, allow_clarify: bool) -> Plan {
         };
     };
 
-    let file_type = l.file_type;
+    // Filters only on the user's own words. A small model readily turns
+    // "en son aldığım vize" into "last 14 days" or "visa" into "document"
+    // and then hides the very file asked for. So: dates come from the
+    // rules; the model may only *remove* a type the rules saw ("resim
+    // dersi notları" is not an image search) or keep filters while
+    // refining, where the earlier request said them.
+    let refining = l.intent == LlmIntent::Refine;
+    let file_type = if r.file_type != FileTypeFilter::Any {
+        if l.file_type == FileTypeFilter::Any {
+            FileTypeFilter::Any
+        } else {
+            r.file_type
+        }
+    } else if refining {
+        l.file_type
+    } else {
+        FileTypeFilter::Any
+    };
     let date = if r.date != DateFilter::Any {
         r.date
-    } else {
+    } else if refining {
         l.date
+    } else {
+        DateFilter::Any
     };
     let own = search::terms(&r.remaining(file_type != FileTypeFilter::Any));
     let mut terms: Vec<String> = Vec::new();
@@ -637,7 +656,9 @@ pub fn plan(text: &str, llm: Option<&LlmPlan>, allow_clarify: bool) -> Plan {
         }
         terms.push(t.clone());
     }
-    let clarify = allow_clarify && l.intent == LlmIntent::Clarify && !r.prior;
+    // Ask back only when the request has no content words at all ("şunu
+    // bul"); "my passport" is searchable as it is.
+    let clarify = allow_clarify && l.intent == LlmIntent::Clarify && !r.prior && own.is_empty();
     Plan {
         intent: if clarify {
             PlanIntent::Clarify
@@ -765,11 +786,44 @@ mod tests {
         assert!(p.by_llm);
         assert_eq!(p.embed_text, "Ali'nin gönderdiği fatura");
         assert_eq!(p.filters.date, DateFilter::LastWeek, "rules keep the date");
-        assert_eq!(p.filters.file_type, FileTypeFilter::Pdf);
+        assert_eq!(
+            p.filters.file_type,
+            FileTypeFilter::Any,
+            "no PDF word in the request: the model's guess is not a filter"
+        );
         assert!(p.terms.contains(&"invoice".to_string()));
         assert!(p.terms.contains(&"faturayı".to_string()));
         assert!(!p.terms.iter().any(|t| fold(t) == "menu"), "{:?}", p.terms);
         assert_eq!(p.added_terms, ["fatura", "invoice"]);
+    }
+
+    #[test]
+    fn model_guesses_never_hide_the_file_asked_for() {
+        // Real failure: "en son aldığım UK vize tarihi" → model said
+        // date=recent, file_type=document; the passport photo was filtered out.
+        let mut v = base();
+        v["date"] = json!("recent");
+        v["file_type"] = json!("document");
+        let p = plan("en son aldığım UK vize tarihi", Some(&llm(v.clone())), true);
+        assert!(p.filters.is_empty(), "{:?}", p.filters);
+        // Refining keeps what the earlier request asked for.
+        v["intent"] = json!("refine");
+        let p = plan("sadece onlar", Some(&llm(v)), true);
+        assert_eq!(p.filters.file_type, FileTypeFilter::Document);
+        assert_eq!(p.filters.date, DateFilter::Recent);
+        // "my passport" has a topic: no clarifying question.
+        let mut c = base();
+        c["intent"] = json!("clarify");
+        c["clarify_question"] = json!("Hangi pasaport?");
+        c["clarify_options"] = json!(["passport", "vize"]);
+        assert_eq!(
+            plan("my passport", Some(&llm(c.clone())), true).intent,
+            PlanIntent::Search
+        );
+        assert_eq!(
+            plan("şunu bul", Some(&llm(c)), true).intent,
+            PlanIntent::Clarify
+        );
     }
 
     #[test]

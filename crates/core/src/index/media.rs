@@ -87,6 +87,18 @@ impl Platform for NoPlatform {
 
 // ---------------------------------------------------------------- images
 
+/// The PNG turned by a quarter (`clockwise`) or the other way. For OCR of
+/// photos taken sideways (a passport page shot in portrait).
+pub fn rotate_png(png: &[u8], clockwise: bool) -> Option<Vec<u8>> {
+    let img = image::load_from_memory_with_format(png, ImageFormat::Png).ok()?;
+    let r = if clockwise {
+        img.rotate90()
+    } else {
+        img.rotate270()
+    };
+    png_bytes(&r).ok()
+}
+
 fn png_bytes(img: &DynamicImage) -> Result<Vec<u8>, MediaError> {
     let mut out = Cursor::new(Vec::new());
     // RGBA8/RGB8 PNG: what every consumer understands.

@@ -144,11 +144,45 @@ fn push_text(out: &mut Vec<Piece>, body: &str, page: Option<u32>, source: TextSo
     }
 }
 
-fn ocr_into(out: &mut Vec<Piece>, platform: &dyn Platform, png: &[u8], page: Option<u32>) {
-    if let Some(Ok(t)) = platform.ocr(png) {
-        if letters(&t) >= 3 {
-            push_text(out, &t, page, TextSource::Ocr);
+/// How much of an OCR result looks like real words (2+ letters/digits).
+/// Text read from a sideways picture is mostly 1–2 character noise.
+fn word_score(t: &str) -> usize {
+    t.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .map(|w| w.chars().count())
+        .sum()
+}
+
+/// Below this many word characters an upright read is retried sideways.
+const OCR_RETRY_BELOW: usize = 60;
+
+/// OCR text of a picture. Windows OCR reads upright text only, so when the
+/// upright read finds few words, the picture is also read turned a quarter
+/// both ways and the clearest reading wins.
+pub fn ocr_text(platform: &dyn Platform, png: &[u8]) -> Option<String> {
+    let mut best = match platform.ocr(png) {
+        Some(Ok(t)) => t,
+        _ => return None,
+    };
+    if word_score(&best) < OCR_RETRY_BELOW {
+        for cw in [true, false] {
+            let Some(r) = media::rotate_png(png, cw) else {
+                continue;
+            };
+            if let Some(Ok(t)) = platform.ocr(&r) {
+                // Clearly better only: noise also scores a little.
+                if word_score(&t) > word_score(&best) * 3 / 2 + 5 {
+                    best = t;
+                }
+            }
         }
+    }
+    (letters(&best) >= 3).then_some(best)
+}
+
+fn ocr_into(out: &mut Vec<Piece>, platform: &dyn Platform, png: &[u8], page: Option<u32>) {
+    if let Some(t) = ocr_text(platform, png) {
+        push_text(out, &t, page, TextSource::Ocr);
     }
 }
 
@@ -487,14 +521,20 @@ pub fn run(
         seen.insert(doc_id.clone());
 
         let committed = (|| -> Result<bool, IpcError> {
-            // Images indexed before a vision LLM was added get their
-            // description on the next scan.
             let can_describe = describer.available();
+            let can_ocr = input.platform.ocr_available();
+            // Images indexed before a vision LLM was added get their
+            // description; images read before sideways OCR existed and
+            // left without text get one more read. Both happen once.
             let wants_caption = |d: &store::DocState| -> Result<bool, IpcError> {
-                Ok(c.kind == SourceKind::Image
-                    && d.indexed_in_generation
-                    && can_describe
-                    && !store::has_caption(conn, &d.document_id, input.generation)?)
+                if c.kind != SourceKind::Image || !d.indexed_in_generation {
+                    return Ok(false);
+                }
+                Ok(
+                    (can_describe && !store::has_caption(conn, &d.document_id, input.generation)?)
+                        || (can_ocr
+                            && store::needs_ocr_retry(conn, &d.document_id, input.generation)?),
+                )
             };
             if let Some(d) = &prior {
                 if d.size == c.size
@@ -586,13 +626,20 @@ pub fn run(
                 );
             }
             p.indexed += 1;
-            store::commit_document(
+            let ok = store::commit_document(
                 conn,
                 input.scope_id,
                 input.generation,
                 &meta(c, &mtime, Some(&hash)),
                 &out,
-            )
+            )?;
+            if ok && c.kind == SourceKind::Image && input.platform.ocr_available() {
+                store::mark_ocr_v2(
+                    conn,
+                    &store::document_id_at(conn, &c.path)?.unwrap_or_default(),
+                )?;
+            }
+            Ok(ok)
         })();
 
         match committed {
@@ -634,4 +681,49 @@ pub fn run(
     }
     progress(p);
     Ok((outcome, p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test-only OCR that can read only landscape pictures.
+    struct UprightOnly;
+    impl Platform for UprightOnly {
+        fn decode_to_png(&self, _: &[u8], _: u32) -> Option<Vec<u8>> {
+            None
+        }
+        fn ocr(&self, png: &[u8]) -> Option<Result<String, String>> {
+            let img = image::load_from_memory(png).ok()?;
+            Some(Ok(if img.width() > img.height() {
+                "VISA UNITED KINGDOM valid from 20/06/19".into()
+            } else {
+                "| . i l : ,".into()
+            }))
+        }
+        fn ocr_available(&self) -> bool {
+            true
+        }
+        fn render_pdf_pages(&self, _: &[u8], _: &[u32], _: u32) -> Option<Vec<(u32, Vec<u8>)>> {
+            None
+        }
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(w, h)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn sideways_photos_are_read_turned() {
+        let t = ocr_text(&UprightOnly, &png(40, 80)).unwrap();
+        assert!(t.contains("UNITED KINGDOM"), "{t}");
+        // Upright pictures are read once and kept.
+        let t = ocr_text(&UprightOnly, &png(80, 40)).unwrap();
+        assert!(t.starts_with("VISA"));
+        assert_eq!(word_score("| . i l"), 0);
+    }
 }

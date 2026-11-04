@@ -486,5 +486,6 @@
   "understood.type.video": "Videos",
   "folders.relinkPick": "Where is “{path}” now?",
   "folders.relinkedToast": "Folder relinked. Only changed files are scanned again.",
-  "folders.relinkMismatch": "That folder does not contain the indexed files, so it was not linked."
+  "folders.relinkMismatch": "That folder does not contain the indexed files, so it was not linked.",
+  "search.notice.filters_relaxed": "Nothing matched that file type or date, so these are the best matches without it."
 }

@@ -14,6 +14,7 @@
 - Context sent to the planning call: last 3 requests, up to 3 shown titles each, active filters. No file text. The pick call additionally sees short excerpts of the candidates (quoted data; output limited to candidate numbers).
 - Images get a description at scan time (`describe.rs`, ADR 022); results are picked by the LLM from 20 candidates (`rerank.rs`), with an optional one-sentence answer tied to a shown file and hidden when that file is revoked.
 - Whole request flow lives in `engine.rs` (ADR 023): prior-result lookup from history (`history::prior_results`), cited summaries (`rerank.rs`), in-memory int8 vector index (`vindex.rs`). The evaluation set and runner are in `examples/eval/` and `crates/runtime/examples/eval.rs`.
+- Manual test 2026-11-04 (passport UK visa page, photo taken sideways): "not found" for every wording. Fixes: (1) filters come only from the user's words — the model may drop a type the rules saw or keep filters while refining, never add a date/type on its own ("en son aldığım vize" had become "last 14 days"); (2) if a filter still hides everything, results without it are shown with a notice; (3) a clarifying question only when the request has no content word; (4) OCR retries pictures turned a quarter both ways when the upright read finds few words (once per image).
 - Answers show "Understood: …" (filters, rejected words, words the LLM added) so a wrong reading is visible.
 
 ## Intent vocabulary (initial)

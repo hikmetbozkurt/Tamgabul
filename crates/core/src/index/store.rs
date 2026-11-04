@@ -596,6 +596,40 @@ pub fn has_caption(
     .map_err(err)
 }
 
+/// Marker: this image was read with sideways OCR (rotation retry).
+const OCR_V2: &str = "ocr_v2";
+
+/// An image read before sideways OCR existed and left without OCR text:
+/// read once more.
+pub fn needs_ocr_retry(
+    conn: &Connection,
+    document_id: &str,
+    generation: &str,
+) -> Result<bool, IpcError> {
+    conn.query_row(
+        "SELECT NOT EXISTS(SELECT 1 FROM chunks c
+                 WHERE c.document_id = ?1 AND c.generation_id = ?2 AND c.modality = 'ocr')
+            AND NOT EXISTS(SELECT 1 FROM audit_events WHERE kind = ?3 AND subject_id = ?1)",
+        params![document_id, generation, OCR_V2],
+        |r| r.get::<_, bool>(0),
+    )
+    .map_err(err)
+}
+
+pub fn mark_ocr_v2(conn: &Connection, document_id: &str) -> Result<(), IpcError> {
+    let done: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM audit_events WHERE kind = ?1 AND subject_id = ?2)",
+            params![OCR_V2, document_id],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if !done {
+        audit(conn, OCR_V2, document_id)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewChunk {
     pub ordinal: u32,
@@ -634,6 +668,16 @@ fn scope_active(conn: &Connection, scope_id: &str) -> Result<bool, IpcError> {
 /// The id of the document at `path`: the stored one when the path is
 /// already indexed (its id may come from an earlier path, e.g. after a
 /// folder relink), else derived from the path.
+pub fn document_id_at(conn: &Connection, path: &Path) -> Result<Option<String>, IpcError> {
+    conn.query_row(
+        "SELECT document_id FROM documents WHERE canonical_path = ?1",
+        [path.to_string_lossy()],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(err)
+}
+
 fn doc_id_for(conn: &Connection, path: &Path) -> Result<String, IpcError> {
     let existing: Option<String> = conn
         .query_row(
