@@ -28,8 +28,6 @@ pub const PICK_POOL: usize = rerank::MAX_CANDIDATES;
 /// Without an LLM: hide hits weaker than this share of the best score
 /// (scores are rank statistics; this is relative, not a calibrated cutoff).
 pub const RELATIVE_FLOOR: f64 = 0.5;
-/// When the LLM looked and found no clear match, show only this many.
-pub const UNSURE_SHOW: usize = 3;
 const PRIOR_SHOW: usize = 5;
 const PLAN_TOKENS: u32 = 320;
 
@@ -52,6 +50,26 @@ pub struct Query<'a> {
     pub now: i64,
     /// Seconds east of UTC on the user's clock.
     pub utc_offset: i64,
+    pub roles: Roles,
+}
+
+/// Which LLM jobs a search may use (Settings → Models, and the evaluation
+/// runner's on/off comparison). Each is used only when an LLM is present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Roles {
+    /// Understand the request (intent, words, clarify).
+    pub plan: bool,
+    /// Pick, answer and summarize from the candidates.
+    pub pick: bool,
+}
+
+impl Default for Roles {
+    fn default() -> Self {
+        Roles {
+            plan: true,
+            pick: true,
+        }
+    }
 }
 
 pub struct Found {
@@ -67,6 +85,8 @@ pub struct Outcome {
     pub direct: Option<DirectAnswer>,
     pub summary: Option<Summary>,
     pub picked_by_llm: bool,
+    /// The first `picked_count` of `found` are the LLM's picks.
+    pub picked_count: usize,
     pub notice: Option<String>,
 }
 
@@ -158,7 +178,7 @@ pub fn run(
 
     // 1. Understand (the LLM plans while the query is embedded once).
     let rules_plan = understand::plan(q.text, None, q.allow_clarify);
-    let use_llm = searchable && models.has_llm();
+    let use_llm = q.roles.plan && searchable && models.has_llm();
     let (llm_out, mut qv) = std::thread::scope(|s| {
         let h = use_llm.then(|| s.spawn(|| llm_plan(models, q)));
         let v = (searchable && generation.is_some())
@@ -182,6 +202,7 @@ pub fn run(
         direct: None,
         summary: None,
         picked_by_llm: false,
+        picked_count: 0,
         notice: None,
     };
 
@@ -223,7 +244,7 @@ pub fn run(
     // 3. Retrieve.
     let filter = DocFilter::new(&plan.filters, q.now, q.utc_offset);
     let browse = plan.is_browse();
-    let pool = if llm_out.is_some() {
+    let pool = if q.roles.pick && models.has_llm() {
         PICK_POOL
     } else {
         RESULT_LIMIT
@@ -258,9 +279,14 @@ pub fn run(
         rerank::Mode::Pick
     };
     let min = if plan.summarize { 1 } else { 2 };
+    let pick_on = q.roles.pick && models.has_llm() && searchable;
     if !browse && found.len() >= min {
-        let pick = if llm_out.is_some() {
-            let cands = candidates(conn, &found, mode);
+        let cands = if pick_on {
+            candidates(conn, &found, mode)
+        } else {
+            Vec::new()
+        };
+        let pick = if pick_on {
             let (system, user) = rerank::rerank_messages(q.text, &cands, mode);
             models
                 .llm_json(
@@ -273,31 +299,42 @@ pub fn run(
         } else {
             None
         };
+        let best = found.first().map(|f| f.hit.score).unwrap_or(0.0);
         match pick {
             Some(p) if !p.order.is_empty() => {
+                let p = rerank::ground(p, q.text, &cands);
                 out.picked_by_llm = true;
+                out.picked_count = p.order.len();
                 if let Some((text, i)) = &p.answer {
                     out.direct = Some(DirectAnswer {
                         text: text.clone(),
                         result_ref: found[*i].resolved.card.result_ref.clone(),
                     });
                 }
+                // The picks go first; the rest stay visible under them
+                // (the LLM may reorder, never hide).
                 let mut slots: Vec<Option<Found>> = found.into_iter().map(Some).collect();
-                found = p.order.iter().filter_map(|i| slots[*i].take()).collect();
+                let mut picked: Vec<Found> =
+                    p.order.iter().filter_map(|i| slots[*i].take()).collect();
                 out.summary = p.summary.map(|text| Summary {
                     text,
-                    sources: found
+                    sources: picked
                         .iter()
                         .map(|f| f.resolved.card.result_ref.clone())
                         .collect(),
                 });
+                let rest = slots
+                    .into_iter()
+                    .flatten()
+                    .filter(|f| f.hit.score >= best * RELATIVE_FLOOR);
+                picked.extend(rest);
+                picked.truncate(RESULT_LIMIT.max(out.picked_count));
+                found = picked;
             }
-            Some(_) => {
-                out.picked_by_llm = true;
-                found.truncate(UNSURE_SHOW);
-            }
-            None => {
-                let best = found.first().map(|f| f.hit.score).unwrap_or(0.0);
+            other => {
+                if other.is_some() && out.notice.is_none() {
+                    out.notice = Some("llm_unsure".into());
+                }
                 found.retain(|f| f.hit.score >= best * RELATIVE_FLOOR);
                 found.truncate(RESULT_LIMIT);
             }

@@ -686,7 +686,15 @@ impl LlmDescriber {
         let model = registry::active(conn)
             .ok()
             .and_then(|v| v.into_iter().find(|m| m.category == ModelCategory::Llm))
-            .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available);
+            .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available)
+            // Settings → Models: image descriptions can be turned off.
+            .filter(|_| {
+                app.state::<AppState>()
+                    .settings
+                    .lock()
+                    .map(|s| s.llm_caption)
+                    .unwrap_or(true)
+            });
         Self {
             app: app.clone(),
             model,

@@ -9,4 +9,10 @@ export type AppSettings = { language: Language,
 /**
  * Accelerator string, e.g. "Ctrl+Shift+Space".
  */
-hotkey: string, widget_position: WidgetPosition, mic_mode: MicMode, launch_at_startup: boolean, history_enabled: boolean, history_retention: HistoryRetention, indexing_mode: IndexingMode, };
+hotkey: string, widget_position: WidgetPosition, mic_mode: MicMode, launch_at_startup: boolean, history_enabled: boolean, history_retention: HistoryRetention, indexing_mode: IndexingMode, 
+/**
+ * LLM jobs, each on/off (used only when an LLM is set up): understand
+ * the request, pick and answer from the results, describe images
+ * while scanning.
+ */
+llm_plan: boolean, llm_pick: boolean, llm_caption: boolean, };

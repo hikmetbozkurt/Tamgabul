@@ -13,7 +13,7 @@ use tamgabul_core::db;
 use tamgabul_core::dto::{
     HistorySession, HistoryTurn, ResultPreview, SearchRequest, SearchResponse,
 };
-use tamgabul_core::engine::{self, Query, QueryModels};
+use tamgabul_core::engine::{self, Query, QueryModels, Roles};
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::history::{self, Answer, ShownResult};
 use tamgabul_core::index::store;
@@ -129,11 +129,19 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
     if text.is_empty() {
         return Err(IpcError::new(ErrorCode::Internal, "empty query"));
     }
-    let history_on = state
+    let (history_on, roles) = state
         .settings
         .lock()
-        .map(|s| s.history_enabled)
-        .unwrap_or(true);
+        .map(|s| {
+            (
+                s.history_enabled,
+                Roles {
+                    plan: s.llm_plan,
+                    pick: s.llm_pick,
+                },
+            )
+        })
+        .unwrap_or((true, Roles::default()));
     let mut conn = worker_conn(&state)?;
     apply_retention(&state, &conn);
     let generation = store::current_generation(&conn)?.map(|(id, _)| id);
@@ -177,6 +185,7 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             allow_clarify: !picked && !ctx.last_was_clarify,
             now: now_unix(),
             utc_offset: req.utc_offset_min.unwrap_or(0).clamp(-14 * 60, 14 * 60) as i64 * 60,
+            roles,
         },
     )?;
 
@@ -202,6 +211,7 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             direct: out.direct.as_ref(),
             summary: out.summary.as_ref(),
             picked_by_llm: out.picked_by_llm,
+            picked_count: out.picked_count,
             notice: out.notice.as_deref(),
         },
         generation.as_deref(),
@@ -219,6 +229,7 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
         answer: out.direct,
         summary: out.summary,
         picked_by_llm: out.picked_by_llm,
+        picked_count: out.picked_count as u32,
         notice: out.notice,
         degraded_llm: !out.plan.by_llm,
         searched_scope_count: scope_count,

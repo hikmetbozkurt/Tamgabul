@@ -11,4 +11,4 @@ export type HistoryTurn = { turn_id: string, role: TurnRole, at: string, text: s
 /**
  * For assistant turns: the response kind and count, rendered by the UI.
  */
-kind: SearchKind | null, count: number | null, choices: Array<Choice>, results: Array<ResultCard>, opened: boolean, question: string | null, understood: Understood | null, answer: DirectAnswer | null, summary: Summary | null, picked_by_llm: boolean, notice: string | null, };
+kind: SearchKind | null, count: number | null, choices: Array<Choice>, results: Array<ResultCard>, opened: boolean, question: string | null, understood: Understood | null, answer: DirectAnswer | null, summary: Summary | null, picked_by_llm: boolean, picked_count: number, notice: string | null, };

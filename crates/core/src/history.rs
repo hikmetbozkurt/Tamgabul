@@ -77,6 +77,8 @@ pub struct Answer<'a> {
     pub direct: Option<&'a DirectAnswer>,
     pub summary: Option<&'a Summary>,
     pub picked_by_llm: bool,
+    /// The first this many results are the LLM's picks.
+    pub picked_count: usize,
     pub notice: Option<&'a str>,
 }
 
@@ -114,6 +116,7 @@ pub fn record_search(
         "answer": answer.direct,
         "summary": answer.summary,
         "picked_by_llm": answer.picked_by_llm,
+        "picked_count": answer.picked_count,
         "notice": answer.notice,
     });
     tx.execute(
@@ -470,6 +473,7 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                 answer: None,
                 summary: None,
                 picked_by_llm: false,
+                picked_count: 0,
                 notice: None,
             });
             continue;
@@ -488,6 +492,8 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
             .unwrap_or_default();
         let mut results = Vec::new();
         let mut opened = false;
+        let picked_total = slots["picked_count"].as_u64().unwrap_or(0) as i64;
+        let mut picked_count = 0u32;
         if let Some(event) = &event {
             let mut st = conn
                 .prepare(
@@ -507,6 +513,9 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                     .map(String::as_str)
                     .unwrap_or("semantic");
                 if let Some(r) = search::resolve(conn, &acl, &doc, chunk, reason, &terms)? {
+                    if rank.is_some_and(|k| k < picked_total) {
+                        picked_count += 1;
+                    }
                     results.push(r.card);
                 }
             }
@@ -560,6 +569,7 @@ pub fn session_turns(conn: &Connection, session: &str) -> Result<Vec<HistoryTurn
                         .all(|src| results.iter().any(|r| &r.result_ref == src))
                 }),
             picked_by_llm: slots["picked_by_llm"].as_bool().unwrap_or(false),
+            picked_count,
             notice: slots["notice"].as_str().map(str::to_owned),
             results,
         });

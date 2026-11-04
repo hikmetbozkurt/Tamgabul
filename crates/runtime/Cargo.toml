@@ -26,3 +26,6 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true
+# Examples only (eval): the same OCR / image decoding as the app.
+tamgabul-platform = { path = "../platform" }
+rusqlite.workspace = true

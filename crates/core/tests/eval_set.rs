@@ -93,6 +93,25 @@ fn set_is_well_formed() {
 }
 
 #[test]
+fn image_set_is_well_formed() {
+    let text = std::fs::read_to_string(root().join("images.jsonl")).unwrap();
+    let mut n = 0;
+    for l in text.lines().filter(|l| !l.trim().is_empty()) {
+        let x: Value = serde_json::from_str(l).unwrap();
+        let kind = x["kind"].as_str().unwrap();
+        assert!(["image", "image_text", "none"].contains(&kind), "{kind}");
+        let expect = x["expect"].as_array().unwrap();
+        assert_eq!(expect.is_empty(), kind == "none", "{}", x["id"]);
+        for f in expect {
+            let name = f.as_str().unwrap();
+            assert!(root().join("images").join(name).is_file(), "missing {name}");
+        }
+        n += 1;
+    }
+    assert!(n >= 12);
+}
+
+#[test]
 fn keyword_requests_are_found_without_models() {
     let db = tempfile::tempdir().unwrap();
     let mut conn = open_and_migrate(&db.path().join("e.db")).unwrap();
@@ -163,6 +182,7 @@ fn keyword_requests_are_found_without_models() {
                 allow_clarify: true,
                 now: 1_793_700_000,
                 utc_offset: 0,
+                roles: Default::default(),
             },
         )
         .unwrap();

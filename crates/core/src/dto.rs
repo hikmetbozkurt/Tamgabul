@@ -102,6 +102,9 @@ ts_export! {
         pub summary: Option<Summary>,
         /// The LLM checked the candidates and picked these.
         pub picked_by_llm: bool,
+        /// The first `picked_count` results are the LLM's picks; the rest
+        /// are other matches, shown under them.
+        pub picked_count: u32,
         /// Extra line for the answer, e.g. "prior_not_accessible": earlier
         /// results matched but their folder is no longer allowed.
         pub notice: Option<String>,
@@ -270,6 +273,7 @@ ts_export! {
         pub answer: Option<DirectAnswer>,
         pub summary: Option<Summary>,
         pub picked_by_llm: bool,
+        pub picked_count: u32,
         pub notice: Option<String>,
     }
 }

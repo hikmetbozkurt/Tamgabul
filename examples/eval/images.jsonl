@@ -1,0 +1,16 @@
+{"id":"i01","query":"alışverişten aldığım fişin fotoğrafı","kind":"image","expect":["IMG_0412.png"]}
+{"id":"i02","query":"market receipt picture","kind":"image","expect":["IMG_0412.png"]}
+{"id":"i03","query":"kredi kartı ekstresi son ödeme tarihi","kind":"image_text","expect":["scan_0007.png"]}
+{"id":"i04","query":"banka mektubunun taranmış hali","kind":"image","expect":["scan_0007.png"]}
+{"id":"i05","query":"çubuk grafik olan görsel","kind":"image","expect":["IMG_0533.png"]}
+{"id":"i06","query":"quarterly sales chart","kind":"image","expect":["IMG_0533.png"]}
+{"id":"i07","query":"evin kat planı çizimi","kind":"image","expect":["IMG_0601.png"]}
+{"id":"i08","query":"apartment floor plan","kind":"image","expect":["IMG_0601.png"]}
+{"id":"i09","query":"Londra uçuşu biniş kartım","kind":"image","expect":["Screenshot_0318.png"]}
+{"id":"i10","query":"boarding pass gate B12","kind":"image_text","expect":["Screenshot_0318.png"]}
+{"id":"i11","query":"hata mesajı veren ekran görüntüsü","kind":"image","expect":["Screenshot_0402.png"]}
+{"id":"i12","query":"connection refused error screenshot","kind":"image_text","expect":["Screenshot_0402.png"]}
+{"id":"i13","query":"kedi resmi","kind":"image","expect":["IMG_0719.png"]}
+{"id":"i14","query":"drawing of a cat","kind":"image","expect":["IMG_0719.png"]}
+{"id":"i15","query":"köpek fotoğrafı","kind":"none","expect":[]}
+{"id":"i16","query":"pasaport fotokopisi","kind":"none","expect":[]}

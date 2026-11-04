@@ -487,5 +487,13 @@
   "folders.relinkPick": "“{path}” şimdi nerede?",
   "folders.relinkedToast": "Klasör yeniden bağlandı. Yalnızca değişen dosyalar yeniden taranacak.",
   "folders.relinkMismatch": "Bu klasörde indekslenmiş dosyalar yok, bu yüzden bağlanmadı.",
-  "search.notice.filters_relaxed": "O dosya türü ya da tarihle eşleşen bir şey yoktu; bunlar o süzgeç olmadan en iyi eşleşmeler."
+  "search.notice.filters_relaxed": "O dosya türü ya da tarihle eşleşen bir şey yoktu; bunlar o süzgeç olmadan en iyi eşleşmeler.",
+  "search.otherResults.one": "Diğer sonuç (1)",
+  "search.otherResults.other": "Diğer sonuçlar ({n})",
+  "search.notice.llm_unsure": "Yerel LLM net bir eşleşme bulamadı; bunlar aramanın en iyi eşleşmeleri.",
+  "settings.llmRoles": "LLM görevleri",
+  "settings.llmRolesHint": "Her görev yalnızca bir LLM kuruluysa çalışır. Aramana yardımı olmayanı kapat.",
+  "settings.llm_plan": "İsteği anlama",
+  "settings.llm_pick": "Sonuçlardan seçme ve yanıtlama",
+  "settings.llm_caption": "Tarama sırasında görselleri betimleme"
 }

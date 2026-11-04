@@ -222,6 +222,16 @@ export function SettingsPage() {
               </div>
             </div>
             <span className="page-foot">{t("settings.measuredNote")}</span>
+            <div className="field" role="group" aria-labelledby="s-llm">
+              <span className="field-label" id="s-llm">{t("settings.llmRoles")}</span>
+              <span className="small muted">{t("settings.llmRolesHint")}</span>
+              {(["llm_plan", "llm_pick", "llm_caption"] as const).map((k) => (
+                <div key={k} className="setting-row">
+                  <span>{t(`settings.${k}`)}</span>
+                  <Toggle checked={settings[k]} label={t(`settings.${k}`)} onChange={(v) => set({ [k]: v })} />
+                </div>
+              ))}
+            </div>
           </section>
 
           <section className="card settings-card" aria-labelledby="s-privacy">

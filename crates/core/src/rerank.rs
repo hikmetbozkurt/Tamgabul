@@ -229,6 +229,196 @@ pub fn parse_rerank(v: &Value, n: usize) -> Option<Pick> {
     })
 }
 
+// ---- Grounding (ADR 021): text the model wrote is shown only when the
+// facts in it can be found, verbatim, in what it was given. A small model
+// can copy a wrong date from its own guess; this check is deterministic.
+
+const MONTHS: [(&str, u64); 36] = [
+    ("ocak", 1),
+    ("subat", 2),
+    ("mart", 3),
+    ("nisan", 4),
+    ("mayis", 5),
+    ("haziran", 6),
+    ("temmuz", 7),
+    ("agustos", 8),
+    ("eylul", 9),
+    ("ekim", 10),
+    ("kasim", 11),
+    ("aralik", 12),
+    ("january", 1),
+    ("february", 2),
+    ("march", 3),
+    ("april", 4),
+    ("may", 5),
+    ("june", 6),
+    ("july", 7),
+    ("august", 8),
+    ("september", 9),
+    ("october", 10),
+    ("november", 11),
+    ("december", 12),
+    ("jan", 1),
+    ("feb", 2),
+    ("mar", 3),
+    ("apr", 4),
+    ("jun", 6),
+    ("jul", 7),
+    ("aug", 8),
+    ("sep", 9),
+    ("sept", 9),
+    ("oct", 10),
+    ("nov", 11),
+    ("dec", 12),
+];
+
+fn words(s: &str) -> Vec<String> {
+    crate::index::text::fold(s)
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn month(w: &str) -> Option<u64> {
+    MONTHS.iter().find(|(m, _)| *m == w).map(|(_, n)| *n)
+}
+
+/// Numbers written in `s`: digit runs (leading zeros dropped) and month
+/// names. `answer` side skips English "may" (also a verb).
+fn numbers(s: &str, answer: bool) -> Vec<u64> {
+    let mut out = Vec::new();
+    for w in words(s) {
+        let mut run = String::new();
+        for c in w.chars().chain(std::iter::once(' ')) {
+            if c.is_ascii_digit() {
+                run.push(c);
+            } else if !run.is_empty() {
+                let t = run.trim_start_matches('0');
+                out.push(if t.is_empty() {
+                    0
+                } else {
+                    t.parse().unwrap_or(u64::MAX)
+                });
+                run.clear();
+            }
+        }
+        if answer && w == "may" {
+            continue;
+        }
+        if let Some(m) = month(&w) {
+            out.push(m);
+        }
+    }
+    out
+}
+
+/// Remove `[n]` markers before checking a sentence.
+fn strip_marks(s: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0;
+    for c in s.chars() {
+        match c {
+            '[' => depth += 1,
+            ']' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// True when every number in `claim` is in `source` (a four-digit year
+/// also passes as its last two digits), and a claim without numbers shares
+/// a content word (4+ letters, not from the request) with the source.
+pub fn grounded(claim: &str, source: &str, request: &str) -> bool {
+    let claim = strip_marks(claim);
+    let have = numbers(source, false);
+    let need = numbers(&claim, true);
+    if !need.is_empty() {
+        return need.iter().all(|n| {
+            have.contains(n)
+                || ((1900..2100).contains(n) && have.contains(&(n % 100)))
+                || (*n < 100
+                    && have
+                        .iter()
+                        .any(|y| (1900..2100).contains(y) && y % 100 == *n))
+        });
+    }
+    let asked = words(request);
+    let src = words(source);
+    let long = |w: &&String| w.chars().count() >= 4;
+    words(&claim).iter().filter(long).any(|w| {
+        !asked.iter().any(|a| a == w)
+            && src
+                .iter()
+                .filter(long)
+                .any(|s| s.starts_with(w.as_str()) || w.starts_with(s.as_str()))
+    })
+}
+
+fn source_text(c: &Candidate) -> String {
+    format!("{} {} {}", c.title, c.modified, c.excerpt)
+}
+
+/// Sentences of a summary (split after `.`, `!`, `?` + space).
+fn sentences(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let b = s.as_bytes();
+    for i in 0..b.len() {
+        let end = matches!(b[i], b'.' | b'!' | b'?')
+            && (i + 1 == b.len() || b[i + 1].is_ascii_whitespace());
+        if end {
+            out.push(s[start..=i].trim());
+            start = i + 1;
+        }
+    }
+    if start < s.len() && !s[start..].trim().is_empty() {
+        out.push(s[start..].trim());
+    }
+    out.retain(|x| !x.is_empty());
+    out
+}
+
+/// Drop an answer whose facts are not in its file, and summary sentences
+/// whose facts are not in the files they cite (markers are in display
+/// order: `[k]` = `cands[order[k-1]]`). A summary with no sentence left is
+/// dropped.
+pub fn ground(mut p: Pick, request: &str, cands: &[Candidate]) -> Pick {
+    if let Some((text, i)) = &p.answer {
+        let ok = cands
+            .get(*i)
+            .is_some_and(|c| grounded(text, &source_text(c), request));
+        if !ok {
+            p.answer = None;
+        }
+    }
+    if let Some(sum) = p.summary.take() {
+        let kept: Vec<&str> = sentences(&sum)
+            .into_iter()
+            .filter(|s| {
+                let cites = citations(s);
+                if cites.is_empty() {
+                    return false;
+                }
+                let src: Option<Vec<String>> = cites
+                    .iter()
+                    .map(|k| {
+                        k.and_then(|k| k.checked_sub(1))
+                            .and_then(|k| p.order.get(k))
+                            .and_then(|i| cands.get(*i))
+                            .map(source_text)
+                    })
+                    .collect();
+                src.is_some_and(|src| grounded(s, &src.join("\n"), request))
+            })
+            .collect();
+        p.summary = (!kept.is_empty()).then(|| kept.join(" "));
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +528,62 @@ mod tests {
             ),
             "{u}"
         );
+    }
+
+    #[test]
+    fn answer_needs_its_numbers_in_the_source() {
+        let src = "UK Visitor visa. Valid from 12.03.2023 until 12.09.2023.";
+        assert!(grounded(
+            "Vizeniz 12 Mart 2023 tarihinde başlıyor.",
+            src,
+            "uk visa ne zaman"
+        ));
+        assert!(grounded("12/03/23.", src, "x"));
+        assert!(!grounded("Vizeniz 14 Mart 2023'te başlıyor.", src, "x"));
+        assert!(!grounded("2024.", src, "x"));
+        // No numbers: needs a content word from the file, not the request.
+        assert!(grounded(
+            "Ev sahibi Ahmet Yılmaz.",
+            "Kiraya veren: AHMET YILMAZ",
+            "ev sahibi kim"
+        ));
+        assert!(!grounded(
+            "Ev sahibi Mehmet.",
+            "Kiraya veren: AHMET YILMAZ",
+            "ev sahibi kim"
+        ));
+        assert!(!grounded("Ev sahibi.", "Ev sahibi Ahmet", "ev sahibi kim"));
+    }
+
+    #[test]
+    fn ground_drops_unsupported_answer_and_sentences() {
+        let mut a = cand("visa.jpg");
+        a.excerpt = "Visa valid until 12.09.2023".into();
+        let mut b = cand("kira.pdf");
+        b.excerpt = "Aylık kira 12.000 TL".into();
+        let cands = [a, b];
+        // Display order: kira first, visa second.
+        let p = Pick {
+            order: vec![1, 0],
+            answer: Some(("12 Eylül 2024.".into(), 0)),
+            summary: Some(
+                "Kira 12.000 TL [1]. Vize 2023'te bitiyor [2]. Kira 15.000 TL [1]. Uydurma [3]."
+                    .into(),
+            ),
+        };
+        let g = ground(p, "özetle", &cands);
+        assert_eq!(g.answer, None);
+        assert_eq!(
+            g.summary.as_deref(),
+            Some("Kira 12.000 TL [1]. Vize 2023'te bitiyor [2].")
+        );
+        let p = Pick {
+            order: vec![0],
+            answer: Some(("12 Eylül 2023.".into(), 0)),
+            summary: Some("Vize 2025 [1].".into()),
+        };
+        let g = ground(p, "vize", &cands);
+        assert!(g.answer.is_some());
+        assert_eq!(g.summary, None);
     }
 }

@@ -487,5 +487,13 @@
   "folders.relinkPick": "Where is “{path}” now?",
   "folders.relinkedToast": "Folder relinked. Only changed files are scanned again.",
   "folders.relinkMismatch": "That folder does not contain the indexed files, so it was not linked.",
-  "search.notice.filters_relaxed": "Nothing matched that file type or date, so these are the best matches without it."
+  "search.notice.filters_relaxed": "Nothing matched that file type or date, so these are the best matches without it.",
+  "search.otherResults.one": "Other result (1)",
+  "search.otherResults.other": "Other results ({n})",
+  "search.notice.llm_unsure": "The local LLM found no clear match; these are the best matches by search.",
+  "settings.llmRoles": "LLM jobs",
+  "settings.llmRolesHint": "Each job runs only if an LLM is set up. Turn off any that do not help your searches.",
+  "settings.llm_plan": "Understand the request",
+  "settings.llm_pick": "Pick and answer from results",
+  "settings.llm_caption": "Describe images while scanning"
 }

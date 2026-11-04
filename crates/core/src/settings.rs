@@ -65,6 +65,12 @@ pub struct AppSettings {
     pub history_enabled: bool,
     pub history_retention: HistoryRetention,
     pub indexing_mode: IndexingMode,
+    /// LLM jobs, each on/off (used only when an LLM is set up): understand
+    /// the request, pick and answer from the results, describe images
+    /// while scanning.
+    pub llm_plan: bool,
+    pub llm_pick: bool,
+    pub llm_caption: bool,
 }
 
 impl Default for AppSettings {
@@ -78,6 +84,9 @@ impl Default for AppSettings {
             history_enabled: true,
             history_retention: HistoryRetention::Days90,
             indexing_mode: IndexingMode::Manual,
+            llm_plan: true,
+            llm_pick: true,
+            llm_caption: true,
         }
     }
 }

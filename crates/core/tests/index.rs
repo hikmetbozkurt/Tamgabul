@@ -828,6 +828,7 @@ fn hybrid_search_finds_by_meaning_words_and_name_and_respects_revoke() {
             direct: Some(&direct),
             summary: None,
             picked_by_llm: true,
+            picked_count: 1,
             notice: None,
         },
         Some(&g),
@@ -986,6 +987,7 @@ fn clarify_turns_and_context_are_kept_in_history() {
             direct: None,
             summary: None,
             picked_by_llm: false,
+            picked_count: 0,
             notice: None,
         },
         Some(&g),
@@ -1021,6 +1023,7 @@ fn clarify_turns_and_context_are_kept_in_history() {
             direct: None,
             summary: None,
             picked_by_llm: false,
+            picked_count: 0,
             notice: None,
         },
         Some(&g),
@@ -1230,6 +1233,7 @@ fn ask(e: &Env, models: &dyn QueryModels, text: &str, session: Option<&str>) -> 
             allow_clarify: true,
             now: 1_793_700_000,
             utc_offset: 0,
+            roles: Default::default(),
         },
     )
     .unwrap()
@@ -1257,6 +1261,7 @@ fn record(e: &mut Env, session: &str, text: &str, out: &engine::Outcome, scope: 
             direct: out.direct.as_ref(),
             summary: out.summary.as_ref(),
             picked_by_llm: out.picked_by_llm,
+            picked_count: out.picked_count,
             notice: out.notice.as_deref(),
         },
         None,
@@ -1308,14 +1313,17 @@ fn llm_pick_keeps_matches_and_cites_them_in_a_summary() {
     // "fatura numarasi" matches several OCR'd files; the LLM keeps #2.
     let pick = serde_json::json!({
         "relevant": ["2"], "answer": "", "answer_from": "none",
-        "summary": "Fatura numarası görselde yazıyor [2]."
+        "summary": "Fatura numarası 4521 [2]. Tutar 900 TL [2]."
     });
     let m = FakeModels { llm: true, pick };
     let out = ask(&e, &m, "fatura numarasi", None);
     assert!(out.picked_by_llm);
-    assert_eq!(out.found.len(), 1);
+    assert_eq!(out.picked_count, 1);
+    // The other matches stay visible under the pick.
+    assert_eq!(out.found.len(), 3);
     let sum = out.summary.as_ref().unwrap();
-    assert_eq!(sum.text, "Fatura numarası görselde yazıyor [1].");
+    // The made-up amount is not in the file: that sentence is dropped.
+    assert_eq!(sum.text, "Fatura numarası 4521 [1].");
     assert_eq!(sum.sources, [out.found[0].resolved.card.result_ref.clone()]);
 
     // Stored and rebuilt from history.
@@ -1331,7 +1339,52 @@ fn llm_pick_keeps_matches_and_cites_them_in_a_summary() {
     };
     let out = ask(&e, &m, "fatura numarasi", None);
     assert!(out.summary.is_none());
-    assert_eq!(out.found.len(), 1);
+    assert_eq!(out.picked_count, 1);
+    let turns = history::session_turns(&e.conn, &session).unwrap();
+    assert_eq!(turns[1].picked_count, 1);
+}
+
+#[test]
+fn llm_answers_are_checked_and_an_unsure_llm_hides_nothing() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    scan(&mut e, &s, &mut FakeEmbedder::new());
+    let answer = |text: &str| FakeModels {
+        llm: true,
+        pick: serde_json::json!({
+            "relevant": ["1"], "answer": text, "answer_from": "1", "summary": ""
+        }),
+    };
+    let out = ask(
+        &e,
+        &answer("Fatura numarası 4521."),
+        "fatura numarasi kac",
+        None,
+    );
+    assert_eq!(out.direct.as_ref().unwrap().text, "Fatura numarası 4521.");
+    // A number that is not in the file: no answer is shown.
+    let out = ask(
+        &e,
+        &answer("Fatura numarası 4512."),
+        "fatura numarasi kac",
+        None,
+    );
+    assert!(out.direct.is_none());
+    assert_eq!(out.picked_count, 1);
+
+    let unsure = FakeModels {
+        llm: true,
+        pick: serde_json::json!({"relevant": [], "answer": "", "answer_from": "none", "summary": ""}),
+    };
+    let none = FakeModels {
+        llm: false,
+        pick: serde_json::Value::Null,
+    };
+    let a = ask(&e, &unsure, "fatura numarasi", None);
+    let b = ask(&e, &none, "fatura numarasi", None);
+    assert_eq!(a.notice.as_deref(), Some("llm_unsure"));
+    assert!(!a.picked_by_llm);
+    assert_eq!(a.found.len(), b.found.len());
 }
 
 #[test]

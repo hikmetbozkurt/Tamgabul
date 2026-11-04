@@ -16,6 +16,11 @@ question: string | null, understood: Understood | null, answer: DirectAnswer | n
  */
 picked_by_llm: boolean, 
 /**
+ * The first `picked_count` results are the LLM's picks; the rest
+ * are other matches, shown under them.
+ */
+picked_count: number, 
+/**
  * Extra line for the answer, e.g. "prior_not_accessible": earlier
  * results matched but their folder is no longer allowed.
  */

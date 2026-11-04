@@ -157,6 +157,10 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
   }
 
   const prev = turn.results[0]?.match_reason === "previous_result";
+  // LLM picks first; the other matches stay one click away, never hidden.
+  const picked = turn.picked_by_llm ? Math.min(turn.picked_count ?? turn.results.length, turn.results.length) : 0;
+  const top = picked > 0 ? turn.results.slice(0, picked) : turn.results;
+  const others = picked > 0 ? turn.results.slice(picked) : [];
   return (
     <div className="msg-ai">
       <AiAvatar />
@@ -170,7 +174,7 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
                 <>{t("search.foundA")} <strong>{t("search.foundB", { n })}</strong>{t("search.foundC")}</>
               )}
             </div>
-            <div className="sub">{turn.picked_by_llm ? t("search.picked", { n: turn.results.length }) : t("search.bestMatches", { n: turn.results.length })}</div>
+            <div className="sub">{picked > 0 ? t("search.picked", { n: picked }) : t("search.bestMatches", { n: turn.results.length })}</div>
             {turn.notice && <div className="sub notice">{t(`search.notice.${turn.notice}`)}</div>}
             {turn.summary && <SummaryBlock s={turn.summary} results={turn.results} onPreview={p.onPreview} />}
             {turn.answer && (
@@ -182,9 +186,17 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
             <UnderstoodLine u={turn.understood} />
           </div>
         </div>
-        {turn.results.map((r) => (
+        {top.map((r) => (
           <ResultCard key={r.result_ref} r={r} opened={turn.opened} onOpen={p.onOpen} onReveal={p.onReveal} onPreview={p.onPreview} />
         ))}
+        {others.length > 0 && (
+          <details className="other-results" data-testid="other-results">
+            <summary>{t("search.otherResults", { n: others.length })}</summary>
+            {others.map((r) => (
+              <ResultCard key={r.result_ref} r={r} opened={turn.opened} onOpen={p.onOpen} onReveal={p.onReveal} onPreview={p.onPreview} />
+            ))}
+          </details>
+        )}
       </div>
     </div>
   );

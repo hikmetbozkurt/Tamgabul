@@ -141,3 +141,33 @@ describe("summary with citations", () => {
     expect(screen.getByTestId("summary").textContent).toContain("Rent is 12,000 TL");
   });
 });
+
+describe("LLM picks", () => {
+  it("shows the picks first and keeps the other matches under a fold", async () => {
+    const { I18nProvider } = await import("./i18n");
+    const { Thread } = await import("./features/search/Thread");
+    const card = (ref: string, title: string) => ({
+      result_ref: ref, title, display_path: "", project: null, file_kind: "pdf" as const, snippet: null,
+      highlights: [], modified_at: "2026-01-01T00:00:00Z", match_reason: "semantic",
+    });
+    const noop = () => {};
+    render(
+      <I18nProvider lang="tr">
+        <Thread
+          turns={[{
+            turn_id: "a1", role: "assistant", at: "2026-01-01T00:00:00Z", text: null, kind: "results", count: 3,
+            choices: [], results: [card("r:a", "vize.jpg"), card("r:b", "kira.pdf"), card("r:c", "not.txt")],
+            opened: false, question: null, understood: null, answer: null, summary: null,
+            picked_by_llm: true, picked_count: 1, notice: null,
+          }]}
+          pending={null} error={null} onChoice={noop} onOpen={noop} onReveal={noop} onPreview={noop} onSuggest={noop}
+        />
+      </I18nProvider>,
+    );
+    const fold = screen.getByTestId("other-results");
+    expect(fold.querySelector("summary")?.textContent).toBe("Diğer sonuçlar (2)");
+    expect(fold.textContent).toContain("kira.pdf");
+    expect(fold.textContent).not.toContain("vize.jpg");
+    expect(screen.getByText("vize.jpg")).toBeTruthy();
+  });
+});
