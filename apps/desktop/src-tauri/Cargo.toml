@@ -22,3 +22,5 @@ rusqlite.workspace = true
 tamgabul-core = { path = "../../../crates/core" }
 tamgabul-platform = { path = "../../../crates/platform" }
 tamgabul-runtime = { path = "../../../crates/runtime" }
+# Folder watching (ReadDirectoryChangesW on Windows, FSEvents on macOS).
+notify = "8"

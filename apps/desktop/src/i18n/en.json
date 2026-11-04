@@ -263,13 +263,13 @@
   "folders.statSize": "Index size",
   "folders.indexing": "Indexing",
   "folders.manual": "Manual",
-  "folders.idle": "When idle",
+  "folders.idle": "Watch new folders",
   "folders.empty": "No folders yet",
   "folders.emptyBody": "Choose a folder to search. You'll see a preview first.",
   "folders.listLabel": "Folders",
   "folders.watching": "Watching",
   "folders.notWatching": "Manual scans · index searchable",
-  "folders.unreachableMeta": "Drive not connected · hidden from results",
+  "folders.unreachableMeta": "Not found at its place · hidden from results · use Relink if it was moved",
   "folders.files.one": "1 file",
   "folders.files.other": "{count} files",
   "folders.lastScan": "last scan {when}",
@@ -481,5 +481,10 @@
   "settings.licenseKind.library": "Library",
   "search.summaryTitle": "Summary from the shown files (local LLM)",
   "search.citeLabel": "Source {n}: {file}",
-  "search.notice.prior_not_accessible": "I showed a matching file before, but its folder is no longer allowed, so I can't show it again."
+  "search.notice.prior_not_accessible": "I showed a matching file before, but its folder is no longer allowed, so I can't show it again.",
+  "file.video": "Video",
+  "understood.type.video": "Videos",
+  "folders.relinkPick": "Where is “{path}” now?",
+  "folders.relinkedToast": "Folder relinked. Only changed files are scanned again.",
+  "folders.relinkMismatch": "That folder does not contain the indexed files, so it was not linked."
 }

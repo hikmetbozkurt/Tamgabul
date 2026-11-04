@@ -8,7 +8,7 @@ import { useData, useResource } from "../../state/data";
 import { useSettings } from "../../state/settings";
 import { useToast } from "../../state/toast";
 import { formatMb, formatNumber, relativeTime } from "../../lib/format";
-import { toIpcError } from "../../ipc/bridge";
+import { pickPath, toIpcError } from "../../ipc/bridge";
 import { clearHashFlags, hashFlag } from "../../shell/router";
 import { AddFolderDialog, RevokeDialog } from "./FolderDialogs";
 
@@ -37,6 +37,19 @@ export function FoldersPage() {
   }, []);
 
   const act = (p: Promise<unknown>) => p.catch((e) => toast(t(`error.${toIpcError(e).code}.title`), true));
+
+  // A moved/renamed folder: the user points at its new place; the index is kept.
+  const relink = async (s: ScopeSummary) => {
+    const path = await pickPath(true, t("folders.relinkPick", { path: s.display_path }));
+    if (!path) return;
+    try {
+      await api.relinkScope(s.scope_id, path);
+      toast(t("folders.relinkedToast"));
+    } catch (e) {
+      const err = toIpcError(e);
+      toast(err.code === "SOURCE_CHANGED" ? t("folders.relinkMismatch") : t(`error.${err.code}.title`), true);
+    }
+  };
   const list = scopes.data ?? [];
   const pathOf = (id: string | null) => list.find((s) => s.scope_id === id)?.display_path ?? null;
 
@@ -113,9 +126,9 @@ export function FoldersPage() {
                       )}
                     </div>
                     {s.status === "unreachable" ? (
-                      <button type="button" className="btn btn-sm" onClick={() => act(api.relinkScope(s.scope_id))}>{t("folders.relink")}</button>
+                      <button type="button" className="btn btn-sm" onClick={() => relink(s)}>{t("folders.relink")}</button>
                     ) : (
-                      <Toggle checked={s.watching} disabled label={t("folders.watchLabel", { path: s.display_path })} onChange={(v) => act(api.setWatching(s.scope_id, v))} />
+                      <Toggle checked={s.watching} disabled={s.status === "revoking"} label={t("folders.watchLabel", { path: s.display_path })} onChange={(v) => act(api.setWatching(s.scope_id, v))} />
                     )}
                     <button
                       type="button"

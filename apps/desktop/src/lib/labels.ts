@@ -23,6 +23,7 @@ export const FILE_ICON: Record<FileKind, IconName> = {
   document: "fileText",
   image: "image",
   audio: "speakerWaves",
+  video: "image",
   other: "file",
 };
 
@@ -33,5 +34,6 @@ export const FILE_KIND_KEY: Record<FileKind, string> = {
   document: "file.document",
   image: "file.image",
   audio: "file.audio",
+  video: "file.video",
   other: "file.other",
 };

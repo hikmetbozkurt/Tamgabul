@@ -263,13 +263,13 @@
   "folders.statSize": "İndeks boyutu",
   "folders.indexing": "İndeksleme",
   "folders.manual": "Elle",
-  "folders.idle": "Boştayken",
+  "folders.idle": "Yeni klasörleri izle",
   "folders.empty": "Henüz klasör yok",
   "folders.emptyBody": "Aranacak bir klasör seç. Önce bir ön izleme göreceksin.",
   "folders.listLabel": "Klasörler",
   "folders.watching": "Dizin izleniyor",
   "folders.notWatching": "Elle tarama · indeks aranabilir",
-  "folders.unreachableMeta": "Sürücü takılı değil · sonuçlarda gösterilmiyor",
+  "folders.unreachableMeta": "Yerinde bulunamadı · sonuçlarda gösterilmiyor · taşındıysa Yeniden bağla",
   "folders.files.one": "1 dosya",
   "folders.files.other": "{count} dosya",
   "folders.lastScan": "son tarama {when}",
@@ -481,5 +481,10 @@
   "settings.licenseKind.library": "Kütüphane",
   "search.summaryTitle": "Gösterilen dosyalardan özet (yerel LLM)",
   "search.citeLabel": "Kaynak {n}: {file}",
-  "search.notice.prior_not_accessible": "Daha önce uyan bir dosya göstermiştim ama klasörünün izni kaldırıldığı için onu tekrar gösteremiyorum."
+  "search.notice.prior_not_accessible": "Daha önce uyan bir dosya göstermiştim ama klasörünün izni kaldırıldığı için onu tekrar gösteremiyorum.",
+  "file.video": "Video",
+  "understood.type.video": "Videolar",
+  "folders.relinkPick": "“{path}” şimdi nerede?",
+  "folders.relinkedToast": "Klasör yeniden bağlandı. Yalnızca değişen dosyalar yeniden taranacak.",
+  "folders.relinkMismatch": "Bu klasörde indekslenmiş dosyalar yok, bu yüzden bağlanmadı."
 }

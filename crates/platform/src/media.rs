@@ -8,6 +8,8 @@
 //!   uses whatever codecs Windows has installed.
 //! - **PDF page rendering** (`Windows.Data.Pdf`) so scanned pages can be read
 //!   with OCR.
+//! - **Video frame**: the shell thumbnail of a video file (one frame, made
+//!   by the codecs Windows has; generic icons are refused).
 //!
 //! Other platforms answer `Unsupported` for now (macOS Vision/PDFKit later).
 //! All functions are blocking and safe to call from any worker thread.
@@ -167,6 +169,39 @@ mod imp {
         })
     }
 
+    pub fn video_frame(path: &std::path::Path, size: u32) -> Result<Vec<u8>, MediaError> {
+        use windows::core::HSTRING;
+        use windows::Storage::FileProperties::{ThumbnailMode, ThumbnailOptions, ThumbnailType};
+        use windows::Storage::StorageFile;
+        init();
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))
+            .map_err(fail)?
+            .get()
+            .map_err(fail)?;
+        let thumb = file
+            .GetThumbnailAsync(
+                ThumbnailMode::SingleItem,
+                size,
+                ThumbnailOptions::ResizeThumbnail,
+            )
+            .map_err(fail)?
+            .get()
+            .map_err(fail)?;
+        // No codec for this video: Windows hands back the file-type icon.
+        if thumb.Type().map_err(fail)? != ThumbnailType::Image {
+            return Err(MediaError::Unsupported);
+        }
+        let n = thumb.Size().map_err(fail)? as u32;
+        let input = thumb.GetInputStreamAt(0).map_err(fail)?;
+        let r = DataReader::CreateDataReader(&input).map_err(fail)?;
+        r.LoadAsync(n).map_err(fail)?.get().map_err(fail)?;
+        let mut raw = vec![0u8; n as usize];
+        r.ReadBytes(&mut raw).map_err(fail)?;
+        // Re-encode whatever the shell returned (BMP/PNG/JPEG) as PNG.
+        let bmp = decode(&raw, size).map_err(fail)?;
+        encode_png(&bmp).map_err(fail)
+    }
+
     pub fn pdf_page_count(bytes: &[u8]) -> Result<u32, MediaError> {
         init();
         let s = stream_from(bytes).map_err(fail)?;
@@ -220,6 +255,9 @@ mod imp {
     pub fn pdf_page_count(_bytes: &[u8]) -> Result<u32, MediaError> {
         Err(MediaError::Unsupported)
     }
+    pub fn video_frame(_path: &std::path::Path, _size: u32) -> Result<Vec<u8>, MediaError> {
+        Err(MediaError::Unsupported)
+    }
     pub fn pdf_render_pages(
         _bytes: &[u8],
         _pages: &[u32],
@@ -252,6 +290,11 @@ pub fn pdf_render_pages(
     f: &mut dyn FnMut(u32, Vec<u8>),
 ) -> Result<(), MediaError> {
     imp::pdf_render_pages(bytes, pages, width, f)
+}
+
+/// One frame of a video file as PNG (longest side ≤ `size`).
+pub fn video_frame(path: &std::path::Path, size: u32) -> Result<Vec<u8>, MediaError> {
+    imp::video_frame(path, size)
 }
 
 pub fn ocr_supported() -> bool {

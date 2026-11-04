@@ -8,6 +8,7 @@ mod scopes;
 mod search_cmd;
 mod system;
 mod tray;
+mod watch;
 mod windows;
 
 use std::sync::{Arc, Mutex};
@@ -34,6 +35,7 @@ pub struct AppState {
     /// Never scanned as a folder (docs/07).
     pub app_data_dir: Option<std::path::PathBuf>,
     pub scopes: scopes::ScopesState,
+    pub watch: watch::WatchState,
 }
 
 /// `model_status` event payload. No paths, no model input.
@@ -122,12 +124,15 @@ fn main() {
                 db_path,
                 app_data_dir: data_dir,
                 scopes: scopes::ScopesState::default(),
+                watch: watch::WatchState::default(),
             });
             // Make registered models known to the manager. Nothing is loaded.
             models::init(&app.state::<AppState>());
             // Finish interrupted purges first, then resume interrupted scans.
             scopes::resume(app.handle());
             search_cmd::init(&app.state::<AppState>());
+            // Watched folders: follow changes from now on.
+            watch::start(app.handle());
 
             let active = hotkey::register(app.handle(), &loaded.hotkey).is_ok();
             *app.state::<AppState>().hotkey_active.lock().unwrap() = active;

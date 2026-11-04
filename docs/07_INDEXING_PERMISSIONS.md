@@ -30,6 +30,10 @@ Default exclude: OS directories (`Windows`, `$Recycle.Bin`, `System Volume Infor
 - FTS/text chunk and vector write use staged generation commit; never expose partially indexed/stale generation as current.
 - Manual indexing first; idle sync opt-in. User can choose manual/idle and never background in initial default.
 
+## Watching and relink (ADR 024)
+- **Watching** (per folder, off by default; "Indexing: watch new folders" turns it on at grant): OS change events only mark the folder dirty; a normal delta scan runs after 10 s without changes. Events inside the app data folder are ignored. No file is read in the event handler.
+- **Relink** (folder shown as unreachable): the user picks the new place. Accepted only if the old place is gone, the new one overlaps no other folder and is not app/model data, and ≥50% of up to 300 sampled indexed files exist there with the same relative path and size. Grant path, document paths and exclusions move in one transaction; document ids, chunks and vectors are kept.
+
 ## Revoke / remove folder — safety critical
 1. UI confirmation: **Remove from search + erase derived index**; original files untouched. Distinguish `Pause Indexing` (keeps searchable current data) vs `Remove Source` (immediate deauthorization).
 2. Atomically mark scope REVOKING and deny read/search/results first; cancel workers, invalidate active result cards and active session cache.

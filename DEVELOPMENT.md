@@ -43,10 +43,12 @@ Modeller repoya girmez. Önerilen yer `C:\AI\models\`:
 ### Klasör ekleme (P1)
 Folders → Add folder → klasör seç → önizleme (dosya sayısı, tahmini boyut, otomatik hariç tutulanlar) → "Allow and scan". Okunanlar (dosyalar asla değiştirilmez):
 - **Metin/kod:** md, txt, csv, json, yaml, log, srt… ve ~100 kod uzantısı; html/xml/svg; rtf.
-- **Belgeler:** docx, pptx, xlsx, odt/odp/ods; pdf (metin katmanı + taranmış sayfalar için OCR).
+- **Belgeler:** docx, pptx, xlsx, odt/odp/ods; eski doc/xls/ppt (Office 97–2003); pdf (metin katmanı + taranmış sayfalar için OCR).
+- **Video:** mp4, mov, mkv, webm, avi, wmv… — Windows küçük resminden bir kare + ses kanalı.
 - **Görseller:** png, jpg, gif, bmp, ico, tiff, webp, tga, pnm, dds, hdr, exr, qoi; Windows kodekleri varsa heic/heif, avif, jxr ve RAW (dng, cr2, nef, arw…). Hem görüntünün anlamı (EmbeddingGemma 2) hem içindeki yazı (Windows OCR) indekslenir.
 - **Ses:** wav, mp3, m4a/aac, flac, ogg, aiff, caf, mka — 30 sn'lik parçalar halinde EmbeddingGemma 2'nin ses kısmıyla. Konuşmanın yazıya dökülmesi (STT) henüz yok.
-- Okunmayanlar: eski `.doc/.xls/.ppt`, opus/wma, video.
+- Okunmayanlar: opus/wma, şifreli Office dosyaları.
+- **İzleme:** Folders'ta klasörün anahtarı açıksa değişiklikten ~10 sn sonra fark taraması yapılır. **Yeniden bağla:** taşınan klasörün yeni yerini seç; dosyaların çoğu aynı göreli yol ve boyutla bulunursa indeks korunur.
 Türkçe OCR için Windows'ta Türkçe dil paketinin (OCR özelliği) yüklü olması gerekir: Ayarlar → Saat ve dil → Dil. Tarama sırasında EmbeddingGemma 2 açılır, bitince boşta kalma süresine göre kapanır. "Remove & purge" klasörü aramadan hemen çıkarır ve indeksini siler.
 
 ### Arama (P2)

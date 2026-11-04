@@ -82,6 +82,7 @@ pub enum SourceKind {
     Pdf,
     Image,
     Audio,
+    Video,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,10 @@ pub enum OfficeFormat {
     Pptx,
     Xlsx,
     OpenDocument,
+    /// Office 97–2003 binary files.
+    Doc,
+    Xls,
+    Ppt,
 }
 
 const TEXT_EXT: &[&str] = &[
@@ -202,6 +207,11 @@ const IMAGE_EXT: &[&str] = &[
     "heic", "heif", "hif", "avif", "jxr", "wdp", "hdp", "dng", "cr2", "cr3", "nef", "nrw", "arw",
     "srf", "sr2", "orf", "rw2", "raf", "srw", "pef", "x3f", "3fr", "rwl", "erf", "kdc", "mrw",
 ];
+/// Audio track via the portable decoder (MP4/MKV/WebM containers), one
+/// frame through the OS thumbnailer.
+const VIDEO_EXT: &[&str] = &[
+    "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "3gp", "mpg", "mpeg", "mts", "m2ts",
+];
 const AUDIO_EXT: &[&str] = &[
     "wav", "wave", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "aif", "aiff", "aifc", "caf",
     "mka", "alac",
@@ -219,6 +229,10 @@ impl SourceKind {
             "pptx" | "pptm" | "ppsx" | "potx" => SourceKind::Office(OfficeFormat::Pptx),
             "xlsx" | "xlsm" | "xltx" => SourceKind::Office(OfficeFormat::Xlsx),
             "odt" | "odp" | "ods" | "odg" | "ott" => SourceKind::Office(OfficeFormat::OpenDocument),
+            "doc" | "dot" => SourceKind::Office(OfficeFormat::Doc),
+            "xls" | "xlt" => SourceKind::Office(OfficeFormat::Xls),
+            "ppt" | "pps" | "pot" => SourceKind::Office(OfficeFormat::Ppt),
+            _ if VIDEO_EXT.contains(&e) => SourceKind::Video,
             _ if TEXT_EXT.contains(&e) => SourceKind::Text,
             _ if MARKUP_EXT.contains(&e) => SourceKind::Markup,
             _ if IMAGE_EXT.contains(&e) => SourceKind::Image,
@@ -236,6 +250,10 @@ impl SourceKind {
             SourceKind::Office(OfficeFormat::Pptx) => "pptx",
             SourceKind::Office(OfficeFormat::Xlsx) => "xlsx",
             SourceKind::Office(OfficeFormat::OpenDocument) => "odf",
+            SourceKind::Office(OfficeFormat::Doc) => "doc",
+            SourceKind::Office(OfficeFormat::Xls) => "xls",
+            SourceKind::Office(OfficeFormat::Ppt) => "ppt",
+            SourceKind::Video => "video",
             SourceKind::Pdf => "pdf",
             SourceKind::Image => "image",
             SourceKind::Audio => "audio",
@@ -252,6 +270,8 @@ impl SourceKind {
             SourceKind::Pdf => 200 * MB,
             SourceKind::Image => 80 * MB,
             SourceKind::Audio => 400 * MB,
+            // Not read into memory: frame + audio track are streamed.
+            SourceKind::Video => 8 * 1024 * MB,
         }
     }
 }

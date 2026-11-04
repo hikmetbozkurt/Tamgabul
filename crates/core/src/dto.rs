@@ -29,7 +29,7 @@ ts_export! {
     pub enum SearchKind { Results, Clarify, NotFound }
 
     #[serde(rename_all = "snake_case")]
-    pub enum FileKind { Markdown, Text, Pdf, Document, Image, Audio, Other }
+    pub enum FileKind { Markdown, Text, Pdf, Document, Image, Audio, Video, Other }
 
     pub struct SearchRequest {
         pub session_id: Option<String>,

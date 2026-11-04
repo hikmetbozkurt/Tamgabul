@@ -28,6 +28,17 @@ fn cp1254(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// Windows-1252 (Western): the 8-bit code page of legacy Office text.
+pub fn cp1252(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&b| match b {
+            0x80..=0x9F => CP125X_80[(b - 0x80) as usize],
+            _ => b as char,
+        })
+        .collect()
+}
+
 fn utf16(bytes: &[u8], le: bool) -> Option<String> {
     let units: Vec<u16> = bytes
         .as_chunks::<2>()

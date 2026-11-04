@@ -60,6 +60,11 @@ pub trait Platform {
         pages: &[u32],
         width: u32,
     ) -> Option<Vec<(u32, Vec<u8>)>>;
+    /// One representative frame of a video file (encoded image), from the
+    /// OS thumbnailer. `None` = unavailable.
+    fn video_frame(&self, _path: &std::path::Path) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// No OS services (non-Windows today, or tests).
@@ -179,6 +184,23 @@ pub const MAX_SEGMENTS: usize = 40;
 
 /// Decode to 16 kHz mono f32. `ext` helps the probe.
 pub fn decode_audio(bytes: Vec<u8>, ext: Option<&str>) -> Result<Vec<f32>, MediaError> {
+    decode_audio_source(Box::new(Cursor::new(bytes)), ext)
+}
+
+/// The audio track of a (possibly large) audio or video file, streamed
+/// from disk — the file is never read whole. Opened read-only.
+pub fn decode_audio_file(
+    path: &std::path::Path,
+    ext: Option<&str>,
+) -> Result<Vec<f32>, MediaError> {
+    let f = std::fs::File::open(path).map_err(|_| MediaError::Corrupt)?;
+    decode_audio_source(Box::new(f), ext)
+}
+
+fn decode_audio_source(
+    src: Box<dyn symphonia::core::io::MediaSource>,
+    ext: Option<&str>,
+) -> Result<Vec<f32>, MediaError> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
     use symphonia::core::errors::Error as SErr;
@@ -187,7 +209,7 @@ pub fn decode_audio(bytes: Vec<u8>, ext: Option<&str>) -> Result<Vec<f32>, Media
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
 
-    let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+    let mss = MediaSourceStream::new(src, Default::default());
     let mut hint = Hint::new();
     if let Some(e) = ext {
         hint.with_extension(e);
@@ -201,10 +223,17 @@ pub fn decode_audio(bytes: Vec<u8>, ext: Option<&str>) -> Result<Vec<f32>, Media
         )
         .map_err(|_| MediaError::UnsupportedCodec)?;
     let mut format = probed.format;
+    // The audio track (video containers also list their video track).
     let track = format
         .tracks()
         .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL && t.codec_params.sample_rate.is_some())
+        .or_else(|| {
+            format
+                .tracks()
+                .iter()
+                .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        })
         .ok_or(MediaError::Empty)?;
     let track_id = track.id;
     let src_rate = track.codec_params.sample_rate.unwrap_or(AUDIO_RATE).max(1);

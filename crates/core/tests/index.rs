@@ -344,9 +344,10 @@ fn scan_indexes_every_kind_with_vectors_and_rescans_only_changes() {
     let mut emb = FakeEmbedder::new();
     let (out, p) = scan(&mut e, &s, &mut emb);
     assert_eq!(out, Outcome::Done);
-    // md, txt, md, png, heic, wav, pdf, pdf, docx — not .doc, not node_modules.
-    assert_eq!(p.total, 9);
-    assert_eq!((p.indexed, p.skipped, p.errors), (9, 0, 0));
+    // md, txt, md, png, heic, wav, pdf, pdf, docx, doc — not node_modules.
+    // The fake .doc is not a real Word 97 file: skipped as corrupt.
+    assert_eq!(p.total, 10);
+    assert_eq!((p.indexed, p.skipped, p.errors), (9, 1, 0));
     assert_eq!(
         count(
             &e.conn,
@@ -480,7 +481,7 @@ fn without_os_services_scans_and_heic_are_skipped_with_reasons() {
         &mut |_| {},
     )
     .unwrap();
-    assert_eq!((p.indexed, p.skipped), (7, 2));
+    assert_eq!((p.indexed, p.skipped), (7, 3));
     let reasons: Vec<String> = {
         let mut st = e
             .conn
@@ -491,7 +492,10 @@ fn without_os_services_scans_and_heic_are_skipped_with_reasons() {
             .map(Result::unwrap)
             .collect()
     };
-    assert_eq!(reasons, ["pdf_no_text_no_ocr", "unsupported_codec"]);
+    assert_eq!(
+        reasons,
+        ["corrupt", "pdf_no_text_no_ocr", "unsupported_codec"]
+    );
     assert_eq!(
         count(&e.conn, "SELECT COUNT(*) FROM chunks WHERE modality='ocr'"),
         0
@@ -1346,4 +1350,114 @@ fn without_llm_weak_tail_hits_are_cut() {
         .iter()
         .all(|f| f.hit.score >= best * engine::RELATIVE_FLOOR));
     assert!(!out.picked_by_llm);
+}
+
+// ---------------------------------------------------------------- legacy, video, relink, watching
+
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name),
+    )
+    .unwrap()
+}
+
+#[test]
+fn legacy_office_files_and_video_audio_tracks_are_indexed() {
+    let mut e = env();
+    let dir = e.files.path().join("old");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("kira.doc"), fixture("legacy.doc")).unwrap();
+    std::fs::write(dir.join("stok.xls"), fixture("stock.xls")).unwrap();
+    std::fs::write(dir.join("clip.mp4"), fixture("clip.mp4")).unwrap();
+    std::fs::write(dir.join("broken.doc"), b"not an office file").unwrap();
+    let before = hashes(&dir);
+    let s = grant(&e, "old");
+    let mut emb = FakeEmbedder::new();
+    let (_, p) = scan(&mut e, &s, &mut emb);
+    assert_eq!(p.indexed, 3, "{p:?}");
+    assert_eq!(p.skipped, 1);
+    let g = e.generation.clone();
+    let hits = search::search(&e.conn, Some(&g), None, "artışı", 10).unwrap();
+    assert_eq!(title_of(&e.conn, &hits[0].document_id), "kira.doc");
+    let hits = search::search(&e.conn, Some(&g), None, "Somun", 10).unwrap();
+    assert_eq!(title_of(&e.conn, &hits[0].document_id), "stok.xls");
+    // The video's audio track became audio segments (no OS frame here).
+    let audio: i64 = count(
+        &e.conn,
+        "SELECT COUNT(*) FROM chunks c JOIN documents d ON d.document_id = c.document_id
+         WHERE d.file_type = 'video' AND c.modality = 'audio'",
+    );
+    assert!(audio >= 1);
+    assert_eq!(
+        search::file_kind("video"),
+        tamgabul_core::dto::FileKind::Video
+    );
+    assert_eq!(
+        search::file_kind("doc"),
+        tamgabul_core::dto::FileKind::Document
+    );
+    // A rescan does not decode the unchanged video again.
+    let images_before = emb.images;
+    let (_, p) = scan(&mut e, &s, &mut emb);
+    assert_eq!(p.indexed, 0);
+    assert_eq!(emb.images, images_before);
+    assert_eq!(before, hashes(&dir), "sources untouched");
+}
+
+#[test]
+fn a_moved_folder_is_relinked_without_reindexing() {
+    let mut e = env();
+    let s = grant(&e, "projects");
+    let mut emb = FakeEmbedder::new();
+    scan(&mut e, &s, &mut emb);
+    let calls = emb.calls;
+    let old = e.files.path().join("projects");
+    let new = e.files.path().join("moved-projects");
+    std::fs::rename(&old, &new).unwrap();
+    let new = walk::canonical(&new).unwrap();
+
+    // Not the same folder: refused.
+    let other = walk::canonical(&e.files.path().join("node_modules")).unwrap();
+    assert!(!store::relink_check(&e.conn, &s, &other).unwrap().accepted());
+    // The moved folder: accepted, index kept.
+    let check = store::relink_check(&e.conn, &s, &new).unwrap();
+    assert!(check.accepted(), "{check:?}");
+    let moved = store::relink_scope(&mut e.conn, &s.scope_id, &new, "moved").unwrap();
+    assert!(moved >= 5);
+    let s2 = store::get_scope(&e.conn, &s.scope_id).unwrap().unwrap();
+    assert_eq!(s2.canonical_path, new);
+
+    // Rescan: nothing is embedded again.
+    let (_, p) = scan(&mut e, &s2, &mut emb);
+    assert_eq!(p.indexed, 0, "{p:?}");
+    assert_eq!(emb.calls, calls);
+    let g = e.generation.clone();
+    let hits = search::search(&e.conn, Some(&g), None, "budget review", 10).unwrap();
+    let path: String = e
+        .conn
+        .query_row(
+            "SELECT canonical_path FROM documents WHERE document_id = ?1",
+            [&hits[0].document_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(Path::new(&path).starts_with(&new), "{path}");
+}
+
+#[test]
+fn watching_is_stored_per_folder() {
+    let e = env();
+    let s = grant(&e, "projects");
+    assert!(!store::is_watching(&e.conn, &s.scope_id).unwrap());
+    store::set_watching(&e.conn, &s.scope_id, true).unwrap();
+    assert!(store::is_watching(&e.conn, &s.scope_id).unwrap());
+    assert_eq!(
+        store::watched_scopes(&e.conn).unwrap()[0].scope_id,
+        s.scope_id
+    );
+    store::set_watching(&e.conn, &s.scope_id, false).unwrap();
+    assert!(store::watched_scopes(&e.conn).unwrap().is_empty());
+    assert!(store::set_watching(&e.conn, "s-nope", true).is_err());
 }

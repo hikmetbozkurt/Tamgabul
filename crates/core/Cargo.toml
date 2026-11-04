@@ -21,6 +21,9 @@ symphonia = { version = "0.5", features = ["all"] }
 # Office Open XML / OpenDocument are zip archives.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 unicode-normalization = "0.1"
+# Legacy Office (.doc/.xls/.ppt): OLE compound files; .xls cells via calamine.
+cfb = "0.14"
+calamine = "0.30"
 
 [dev-dependencies]
 tempfile.workspace = true

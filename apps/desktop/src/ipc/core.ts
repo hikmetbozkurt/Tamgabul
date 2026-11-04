@@ -152,9 +152,9 @@ export class CoreApi implements Api {
     this.changed();
   }
 
-  async relinkScope(scopeId: string) {
+  async relinkScope(scopeId: string, path: string) {
     if (!isTauri()) throw noCore("relink_scope");
-    await call("relink_scope", { scopeId });
+    await call("relink_scope", { scopeId, path });
   }
 
   async search(req: SearchRequest): Promise<SearchResponse> {

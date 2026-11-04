@@ -19,6 +19,7 @@ use rusqlite::Connection;
 use crate::describe::Describer;
 use crate::error::{ErrorCode, IpcError};
 use crate::index::extract;
+use crate::index::legacy;
 use crate::index::media::{self, Platform};
 use crate::index::store::{self, DocMeta, NewChunk};
 use crate::index::text;
@@ -177,9 +178,47 @@ impl Describer for ScanDescriber<'_> {
     }
 }
 
+/// Caption (optional LLM), OCR text and the image vector of one picture.
+fn image_pieces(
+    out: &mut Vec<Piece>,
+    img: media::NormalizedImage,
+    platform: &dyn Platform,
+    embedder: &mut dyn Embedder,
+    describer: &mut dyn Describer,
+    cancel: &AtomicBool,
+) {
+    // Description first: it is what result cards show for an image.
+    if describer.available() && !cancel.load(Ordering::Relaxed) {
+        if let Ok(Some(caption)) = describer.describe_image(&img.model_png) {
+            push_text(out, &caption, None, TextSource::Caption);
+        }
+    }
+    ocr_into(out, platform, &img.ocr_png, None);
+    if embedder.supports_vision() {
+        out.push(Piece::Media {
+            modality: "image",
+            bytes: img.model_png,
+            time_ms: None,
+        });
+    }
+}
+
+fn audio_pieces(out: &mut Vec<Piece>, samples: &[f32]) {
+    for seg in media::audio_segments(samples) {
+        out.push(Piece::Media {
+            modality: "audio",
+            bytes: seg.wav,
+            time_ms: Some((seg.start_ms, seg.end_ms)),
+        });
+    }
+}
+
 /// Parse one file into pieces. `Err(reason)` = skip the file (recorded).
+// One call per file with the job's services; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn extract_pieces(
     kind: SourceKind,
+    path: &Path,
     bytes: Vec<u8>,
     ext: Option<&str>,
     platform: &dyn Platform,
@@ -212,6 +251,16 @@ pub fn extract_pieces(
                 OfficeFormat::Pptx => media::OfficeKind::Pptx,
                 OfficeFormat::Xlsx => media::OfficeKind::Xlsx,
                 OfficeFormat::OpenDocument => media::OfficeKind::OpenDocument,
+                OfficeFormat::Doc | OfficeFormat::Xls | OfficeFormat::Ppt => {
+                    let body = match f {
+                        OfficeFormat::Doc => legacy::doc_text(&bytes),
+                        OfficeFormat::Xls => legacy::xls_text(&bytes),
+                        _ => legacy::ppt_text(&bytes),
+                    }
+                    .map_err(|e| e.code())?;
+                    push_text(&mut out, &body, None, TextSource::File);
+                    return Ok(out);
+                }
             };
             let body = media::office_text(&bytes, k).map_err(|e| e.code())?;
             push_text(&mut out, &body, None, TextSource::File);
@@ -261,22 +310,26 @@ pub fn extract_pieces(
         }
         SourceKind::Image => {
             let img = media::normalize_image(&bytes, ext, platform).map_err(|e| e.code())?;
-            // Description first: it is what result cards show for an image.
-            if describer.available() && !cancel.load(Ordering::Relaxed) {
-                if let Ok(Some(caption)) = describer.describe_image(&img.model_png) {
-                    push_text(&mut out, &caption, None, TextSource::Caption);
-                }
-            }
-            ocr_into(&mut out, platform, &img.ocr_png, None);
-            if embedder.supports_vision() {
-                out.push(Piece::Media {
-                    modality: "image",
-                    bytes: img.model_png,
-                    time_ms: None,
-                });
-            }
+            image_pieces(&mut out, img, platform, embedder, describer, cancel);
             if out.is_empty() {
                 return Err("no_image_encoder");
+            }
+        }
+        SourceKind::Video => {
+            // One frame (OS thumbnailer) is read like an image; the audio
+            // track like a recording. The file itself is never loaded whole.
+            if let Some(frame) = platform.video_frame(path) {
+                if let Ok(img) = media::normalize_image(&frame, None, platform) {
+                    image_pieces(&mut out, img, platform, embedder, describer, cancel);
+                }
+            }
+            if embedder.supports_audio() && !cancel.load(Ordering::Relaxed) {
+                if let Ok(samples) = media::decode_audio_file(path, ext) {
+                    audio_pieces(&mut out, &samples);
+                }
+            }
+            if out.is_empty() {
+                return Err("no_video_decoder");
             }
         }
         SourceKind::Audio => {
@@ -284,13 +337,7 @@ pub fn extract_pieces(
                 return Err("no_audio_encoder");
             }
             let samples = media::decode_audio(bytes, ext).map_err(|e| e.code())?;
-            for seg in media::audio_segments(&samples) {
-                out.push(Piece::Media {
-                    modality: "audio",
-                    bytes: seg.wav,
-                    time_ms: Some((seg.start_ms, seg.end_ms)),
-                });
-            }
+            audio_pieces(&mut out, &samples);
             if out.is_empty() {
                 return Err("silent");
             }
@@ -430,10 +477,14 @@ pub fn run(
             outcome = Outcome::Cancelled;
             break;
         }
-        let doc_id = store::document_id(&c.path);
-        seen.insert(doc_id.clone());
         let mtime = store::mtime_str(c.mtime);
         let prior = store::doc_by_path(conn, &c.path, input.generation)?;
+        // The stored id (it may come from an earlier path after a relink).
+        let doc_id = prior
+            .as_ref()
+            .map(|d| d.document_id.clone())
+            .unwrap_or_else(|| store::document_id(&c.path));
+        seen.insert(doc_id.clone());
 
         let committed = (|| -> Result<bool, IpcError> {
             // Images indexed before a vision LLM was added get their
@@ -455,7 +506,14 @@ pub fn run(
                     return store::keep_document(conn, input.scope_id, &d.document_id, &mtime);
                 }
             }
-            let bytes = match read_file(&c.path, c.kind.max_bytes(limits.max_file_bytes)) {
+            // Videos are streamed by their decoders, never read whole; size +
+            // modification time stand in for the content hash.
+            let video = c.kind == SourceKind::Video;
+            let bytes = match if video {
+                Ok(Vec::new())
+            } else {
+                read_file(&c.path, c.kind.max_bytes(limits.max_file_bytes))
+            } {
                 Ok(b) => b,
                 Err(_) => {
                     p.errors += 1;
@@ -468,7 +526,11 @@ pub fn run(
                     );
                 }
             };
-            let hash = blake3::hash(&bytes).to_hex().to_string();
+            let hash = if video {
+                format!("stat:{}:{mtime}", c.size)
+            } else {
+                blake3::hash(&bytes).to_hex().to_string()
+            };
             if let Some(d) = &prior {
                 if d.content_hash.as_deref() == Some(hash.as_str())
                     && d.indexed_in_generation
@@ -489,6 +551,7 @@ pub fn run(
                 .map(|e| e.to_string_lossy().to_ascii_lowercase());
             let pieces = match extract_pieces(
                 c.kind,
+                &c.path,
                 bytes,
                 ext.as_deref(),
                 input.platform,

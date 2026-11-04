@@ -174,12 +174,13 @@ Görsellerdeki Türkçe yazı için Türkçe dilini OCR özelliğiyle birlikte k
 | Tür | Formatlar | Nasıl okunur |
 |---|---|---|
 | Metin ve kod | `md`, `txt`, `csv`, `json`, `yaml`, `log`, `srt`, ~100 kod uzantısı; `html`, `xml`, `svg`; `rtf` | UTF-8 / UTF-16 / Windows-1254 çözümleme, satır numaralarıyla parçalara bölünür |
-| Belgeler | `docx`, `pptx`, `xlsx`, `odt`, `odp`, `ods` | belgenin XML'inden metin |
+| Belgeler | `docx`, `pptx`, `xlsx`, `odt`, `odp`, `ods`; Office 97–2003 `doc`, `xls`, `ppt` | belgenin XML'inden metin; eski dosyalar ikili akışlarından (parolalı dosyalar atlanır) |
 | PDF | `pdf` | metin katmanı; neredeyse hiç metni olmayan sayfalar görüntüye çevrilip OCR'lanır (Windows) |
 | Görseller | `png`, `jpg`, `gif`, `bmp`, `ico`, `tiff`, `webp`, `tga`, `pnm`, `dds`, `hdr`, `exr`, `qoi`; Windows kodeği kuruluysa `heic`, `avif`, `jxr`, kamera RAW | görsel vektörü + OCR yazısı + isteğe bağlı LLM açıklaması |
 | Ses | `wav`, `mp3`, `m4a`/`aac`, `flac`, `ogg`, `aiff`, `caf`, `mka` | EmbeddingGemma 2'nin ses kodlayıcısıyla 30 sn'lik parçalar |
+| Video | `mp4`, `m4v`, `mov`, `mkv`, `webm`, `avi`, `wmv`, `3gp`, `mpg`, `mts`, `m2ts` | Windows küçük resim üreticisinden bir kare (görsel gibi okunur) + kodeği destekleniyorsa ses kanalı (AAC, MP3, FLAC, Vorbis, PCM…); dosya asla bütün olarak belleğe alınmaz |
 
-Okunmayanlar: eski `.doc` / `.xls` / `.ppt`, Opus, WMA, video.
+Okunmayanlar: Opus ve WMA ses (video ses kanalı olarak da), şifreli Office dosyaları.
 
 ## Proje yapısı
 
@@ -223,7 +224,7 @@ Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md) dosyasında. Mühendislik kararl
 - **Henüz ölçüm yok.** Yükleme süresi, bellek, tarama hızı ve arama kalitesi gerçek bir makinede ölçülmedi. İki dilli değerlendirme seti ve çalıştırıcısı [`examples/eval/`](examples/eval/README.md) klasöründe. Görsel açıklamalı ilk tarama belirgin şekilde daha yavaştır, çünkü LLM her görsele bir kere bakar.
 - **Ses dosyaları** sesin anlamından ve dosya adından bulunur; konuşmayı yazıya çevirme (STT) henüz yok.
 - **Sesli giriş/çıkış (STT/TTS)** henüz yapılmadı.
-- **Klasör izleme** henüz yok. Değişiklikler için klasörü yeniden tara (yalnızca değişen dosyalar işlenir).
+- **Klasör izleme**, değişiklikler durduktan yaklaşık 10 saniye sonra klasörü yeniden tarar (yalnızca değişen dosyalar işlenir). Taşınan ya da adı değişen bir klasör, yeniden indekslenmeden yeni yerine **yeniden bağlanabilir**.
 
 ## Yol haritası
 

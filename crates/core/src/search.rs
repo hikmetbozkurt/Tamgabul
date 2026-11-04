@@ -559,7 +559,8 @@ pub fn file_kind(db: &str) -> FileKind {
         "pdf" => FileKind::Pdf,
         "image" => FileKind::Image,
         "audio" => FileKind::Audio,
-        "docx" | "pptx" | "xlsx" | "odf" | "rtf" => FileKind::Document,
+        "docx" | "pptx" | "xlsx" | "odf" | "rtf" | "doc" | "xls" | "ppt" => FileKind::Document,
+        "video" => FileKind::Video,
         "markup" => FileKind::Text,
         _ => FileKind::Other,
     }

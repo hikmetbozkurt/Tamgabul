@@ -40,7 +40,8 @@ export interface Api {
   startIndex(id: string): Promise<void>;
   cancelIndex(id: string): Promise<void>;
   revokeScope(req: RevokeRequest): Promise<void>;
-  relinkScope(id: string): Promise<void>;
+  /** Point a moved folder at `path` (chosen by the user), keeping its index. */
+  relinkScope(id: string, path: string): Promise<void>;
 
   search(req: SearchRequest): Promise<SearchResponse>;
   preview(resultRef: string): Promise<ResultPreview>;

@@ -121,7 +121,7 @@ fn summary(
         scope_id: s.scope_id.clone(),
         display_path: s.display_path.clone(),
         status,
-        watching: false,
+        watching: store::is_watching(conn, &s.scope_id).unwrap_or(false),
         file_count: Some(
             prog.filter(|_| running)
                 .map(|p| p.processed)
@@ -303,11 +303,23 @@ pub fn grant_scope(
         error_summary: None,
         max_file_bytes: None,
     };
+    // Settings "Indexing: watch new folders" turns watching on at grant.
+    let watch_new = state
+        .settings
+        .lock()
+        .map(|s| s.indexing_mode == tamgabul_core::settings::IndexingMode::WhenIdle)
+        .unwrap_or(false);
     let s = with_db(&state, |conn| {
         store::insert_scope(conn, &scope)?;
+        if watch_new {
+            store::set_watching(conn, &scope.scope_id, true)?;
+        }
         let all = store::visible_scopes(conn)?;
         Ok(summary(&state, conn, &all, &scope))
     })?;
+    if watch_new {
+        crate::watch::sync(&app);
+    }
     // The user confirmed "Allow and scan".
     start_job(&app, &scope.scope_id)?;
     notify(&app);
@@ -351,26 +363,106 @@ pub fn cancel_index(state: State<'_, AppState>, scope_id: String) -> Result<(), 
     Ok(())
 }
 
+pub(crate) fn is_scanning(state: &AppState, scope_id: &str) -> bool {
+    state
+        .scopes
+        .jobs
+        .lock()
+        .map(|j| j.contains_key(scope_id))
+        .unwrap_or(false)
+}
+
+/// Watching on: changes in the folder are picked up by a delta scan after a
+/// quiet period (`watch.rs`). Turning it on also scans once to catch up.
 #[tauri::command]
-pub fn set_watching(scope_id: String, on: bool) -> Result<(), IpcError> {
-    let _ = scope_id;
+pub fn set_watching(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    scope_id: String,
+    on: bool,
+) -> Result<(), IpcError> {
+    with_db(&state, |conn| store::set_watching(conn, &scope_id, on))?;
+    crate::watch::sync(&app);
     if on {
-        // Automatic re-scans (idle sync, ADR 016) arrive later; scans are manual.
-        return Err(IpcError::new(
-            ErrorCode::NotImplemented,
-            "watching arrives later",
-        ));
+        start_job(&app, &scope_id)?;
     }
+    notify(&app);
     Ok(())
 }
 
+/// A folder that was moved or renamed: point it at its new place and keep
+/// its index. Only for a folder whose old place is gone, only to a folder
+/// the user picked, and only when most indexed files are found there with
+/// the same relative path and size. Then a delta scan runs.
 #[tauri::command]
-pub fn relink_scope(scope_id: String) -> Result<(), IpcError> {
-    let _ = scope_id;
-    Err(IpcError::new(
-        ErrorCode::NotImplemented,
-        "relink arrives later",
-    ))
+pub async fn relink_scope(
+    app: AppHandle,
+    scope_id: String,
+    path: String,
+) -> Result<ScopeSummary, IpcError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let raw = PathBuf::from(path.trim());
+        if walk::is_network_path(&raw) {
+            return Err(IpcError::new(
+                ErrorCode::ScopeNotAuthorized,
+                "network folders are not supported yet",
+            ));
+        }
+        let new_root = walk::canonical(&raw)?;
+        if !new_root.is_dir() {
+            return Err(IpcError::new(ErrorCode::ScopeNotAuthorized, "not a folder"));
+        }
+        let summary_out = with_db(&state, |conn| {
+            let scope = store::get_scope(conn, &scope_id)?
+                .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
+            if scope.canonical_path.exists() {
+                return Err(IpcError::new(
+                    ErrorCode::ScopeNotAuthorized,
+                    "the folder is still at its old place",
+                ));
+            }
+            let deny = deny_paths(&state, conn);
+            if deny.iter().any(|d| walk::is_within(&new_root, d)) {
+                return Err(IpcError::new(
+                    ErrorCode::ScopeNotAuthorized,
+                    "app data or model folder",
+                ));
+            }
+            let all = store::visible_scopes(conn)?;
+            let overlaps = all.iter().any(|o| {
+                o.scope_id != scope_id
+                    && o.state.is_authorized()
+                    && (walk::is_within(&new_root, &o.canonical_path)
+                        || walk::is_within(&o.canonical_path, &new_root)
+                        || walk::is_within(&o.canonical_path, &scope.canonical_path))
+            });
+            if overlaps {
+                return Err(IpcError::new(
+                    ErrorCode::ScopeNotAuthorized,
+                    "overlaps another folder; remove and add it instead",
+                ));
+            }
+            let check = store::relink_check(conn, &scope, &new_root)?;
+            if !check.accepted() {
+                return Err(IpcError::new(
+                    ErrorCode::SourceChanged,
+                    "this does not look like the same folder",
+                ));
+            }
+            store::relink_scope(conn, &scope_id, &new_root, &walk::display(&new_root))?;
+            let all = store::visible_scopes(conn)?;
+            let s = store::get_scope(conn, &scope_id)?
+                .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
+            Ok(summary(&state, conn, &all, &s))
+        })?;
+        crate::watch::sync(&app);
+        start_job(&app, &scope_id)?;
+        notify(&app);
+        Ok(summary_out)
+    })
+    .await
+    .map_err(|_| IpcError::new(ErrorCode::Internal, "relink task failed"))?
 }
 
 // ---------------------------------------------------------------- revoke
@@ -394,6 +486,7 @@ pub fn revoke_scope(
     let purge = with_db(&state, |conn| {
         store::begin_revoke(conn, &req.scope_id, req.mode, req.purge_history)
     })?;
+    crate::watch::sync(&app);
     notify(&app);
     if let Some(purge_id) = purge {
         let app = app.clone();
@@ -535,6 +628,9 @@ impl Platform for OsMedia {
     }
     fn ocr_available(&self) -> bool {
         tamgabul_platform::media::ocr_supported()
+    }
+    fn video_frame(&self, path: &Path) -> Option<Vec<u8>> {
+        tamgabul_platform::media::video_frame(path, 1536).ok()
     }
     fn render_pdf_pages(
         &self,
@@ -763,10 +859,15 @@ fn set_error_clear(app: &AppHandle, scope_id: &str) {
 pub fn resume(app: &AppHandle) {
     let state = app.state::<AppState>();
     let pending = with_db(&state, |conn| {
-        Ok((
-            store::pending_purges(conn)?,
-            store::interrupted_scopes(conn)?,
-        ))
+        // Watched folders also scan once: they may have changed while the
+        // app was closed.
+        let mut scans = store::interrupted_scopes(conn)?;
+        for s in store::watched_scopes(conn)? {
+            if !scans.contains(&s.scope_id) {
+                scans.push(s.scope_id);
+            }
+        }
+        Ok((store::pending_purges(conn)?, scans))
     });
     let Ok((purges, scans)) = pending else { return };
     let app = app.clone();

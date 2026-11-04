@@ -221,6 +221,206 @@ pub fn authorized(conn: &Connection, path: &Path) -> Result<bool, IpcError> {
     Ok(false)
 }
 
+// ---------------------------------------------------------------- watching
+
+/// Folder watching (rescan on change) is `scan_mode = 'idle_sync'`.
+pub fn set_watching(conn: &Connection, scope_id: &str, on: bool) -> Result<(), IpcError> {
+    let n = conn
+        .execute(
+            "UPDATE source_scopes SET scan_mode = ?2 WHERE scope_id = ?1 AND state IN ('ACTIVE','PAUSED','ERROR')",
+            params![scope_id, if on { "idle_sync" } else { "manual" }],
+        )
+        .map_err(err)?;
+    if n == 0 {
+        return Err(IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"));
+    }
+    audit(conn, if on { "watch_on" } else { "watch_off" }, scope_id)
+}
+
+pub fn is_watching(conn: &Connection, scope_id: &str) -> Result<bool, IpcError> {
+    conn.query_row(
+        "SELECT scan_mode = 'idle_sync' FROM source_scopes WHERE scope_id = ?1",
+        [scope_id],
+        |r| r.get::<_, bool>(0),
+    )
+    .optional()
+    .map(|v| v.unwrap_or(false))
+    .map_err(err)
+}
+
+/// Active folders with watching on.
+pub fn watched_scopes(conn: &Connection) -> Result<Vec<Scope>, IpcError> {
+    let mut st = conn
+        .prepare(&format!(
+            "SELECT {SCOPE_COLS} FROM source_scopes WHERE state = 'ACTIVE' AND scan_mode = 'idle_sync'
+             ORDER BY created_at, scope_id"
+        ))
+        .map_err(err)?;
+    let v = st
+        .query_map([], scope_row)
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(v)
+}
+
+// ---------------------------------------------------------------- relink
+
+/// Share of sampled indexed files that must be found at the new place
+/// (same relative path and size) to accept it as the same folder.
+pub const RELINK_MIN_MATCH: f64 = 0.5;
+const RELINK_SAMPLE: usize = 300;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelinkCheck {
+    pub sampled: u32,
+    pub matched: u32,
+}
+
+impl RelinkCheck {
+    pub fn accepted(&self) -> bool {
+        self.matched > 0 && self.matched as f64 >= self.sampled as f64 * RELINK_MIN_MATCH
+    }
+}
+
+/// How many of the folder's indexed files exist under `new_root` with the
+/// same relative path and size. Reads metadata only.
+pub fn relink_check(
+    conn: &Connection,
+    scope: &Scope,
+    new_root: &Path,
+) -> Result<RelinkCheck, IpcError> {
+    let mut st = conn
+        .prepare(
+            "SELECT d.canonical_path, d.size_bytes FROM documents d
+             JOIN document_scopes s ON s.document_id = d.document_id
+             WHERE s.scope_id = ?1 AND d.parse_status = 'PARSED' ORDER BY d.document_id LIMIT ?2",
+        )
+        .map_err(err)?;
+    let rows: Vec<(String, i64)> = st
+        .query_map(params![scope.scope_id, RELINK_SAMPLE as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    let mut c = RelinkCheck {
+        sampled: 0,
+        matched: 0,
+    };
+    for (p, size) in rows {
+        let Ok(rel) = Path::new(&p).strip_prefix(&scope.canonical_path) else {
+            continue;
+        };
+        c.sampled += 1;
+        if std::fs::metadata(new_root.join(rel))
+            .is_ok_and(|m| m.is_file() && m.len() as i64 == size)
+        {
+            c.matched += 1;
+        }
+    }
+    Ok(c)
+}
+
+/// Point a moved folder at its new place, keeping its index: the folder
+/// grant, its documents and its exclusions move to `new_root` in one
+/// transaction (chunks and vectors stay as they are). The next scan only
+/// processes what really changed. The caller has checked `relink_check`
+/// and that the user chose `new_root`.
+pub fn relink_scope(
+    conn: &mut Connection,
+    scope_id: &str,
+    new_root: &Path,
+    new_display: &str,
+) -> Result<u32, IpcError> {
+    let scope = get_scope(conn, scope_id)?
+        .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
+    if !matches!(
+        scope.state,
+        ScopeState::Active | ScopeState::Paused | ScopeState::Error
+    ) {
+        return Err(IpcError::new(ErrorCode::ScopeRevoked, "folder was removed"));
+    }
+    let old = scope.canonical_path.clone();
+    let tx = conn.transaction().map_err(err)?;
+    let docs: Vec<(String, String)> = {
+        let mut st = tx
+            .prepare(
+                "SELECT d.document_id, d.canonical_path FROM documents d
+                 JOIN document_scopes s ON s.document_id = d.document_id WHERE s.scope_id = ?1",
+            )
+            .map_err(err)?;
+        let v = st
+            .query_map([scope_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?
+            .collect::<Result<_, _>>()
+            .map_err(err)?;
+        v
+    };
+    let mut moved = 0u32;
+    for (id, p) in docs {
+        let Ok(rel) = Path::new(&p).strip_prefix(&old) else {
+            continue;
+        };
+        let np = new_root.join(rel);
+        // A file already indexed at the new path (another folder) wins;
+        // the old entry is dropped from this folder.
+        let taken: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM documents WHERE canonical_path = ?1)",
+                [np.to_string_lossy()],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if taken {
+            tx.execute(
+                "DELETE FROM document_scopes WHERE document_id = ?1 AND scope_id = ?2",
+                params![id, scope_id],
+            )
+            .map_err(err)?;
+            continue;
+        }
+        tx.execute(
+            "UPDATE documents SET canonical_path = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE document_id = ?1",
+            params![id, np.to_string_lossy()],
+        )
+        .map_err(err)?;
+        moved += 1;
+    }
+    let ex: Vec<(String, String)> = {
+        let mut st = tx
+            .prepare("SELECT exclusion_id, canonical_path FROM scope_exclusions WHERE parent_scope_id = ?1")
+            .map_err(err)?;
+        let v = st
+            .query_map([scope_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?
+            .collect::<Result<_, _>>()
+            .map_err(err)?;
+        v
+    };
+    for (id, p) in ex {
+        if let Ok(rel) = Path::new(&p).strip_prefix(&old) {
+            tx.execute(
+                "UPDATE scope_exclusions SET canonical_path = ?2 WHERE exclusion_id = ?1",
+                params![id, new_root.join(rel).to_string_lossy()],
+            )
+            .map_err(err)?;
+        }
+    }
+    tx.execute(
+        "UPDATE source_scopes SET canonical_path = ?2, display_path = ?3, error_summary = NULL,
+             state = CASE WHEN state = 'ERROR' THEN 'ACTIVE' ELSE state END
+         WHERE scope_id = ?1",
+        params![scope_id, new_root.to_string_lossy(), new_display],
+    )
+    .map_err(err)?;
+    audit(&tx, "scope_relinked", scope_id)?;
+    delete_orphans(&tx)?;
+    tx.commit().map_err(err)?;
+    Ok(moved)
+}
+
 fn audit(conn: &Connection, kind: &str, subject: &str) -> Result<(), IpcError> {
     conn.execute(
         "INSERT INTO audit_events(kind, subject_id) VALUES (?1, ?2)",
@@ -431,6 +631,21 @@ fn scope_active(conn: &Connection, scope_id: &str) -> Result<bool, IpcError> {
     Ok(s.as_deref() == Some("ACTIVE"))
 }
 
+/// The id of the document at `path`: the stored one when the path is
+/// already indexed (its id may come from an earlier path, e.g. after a
+/// folder relink), else derived from the path.
+fn doc_id_for(conn: &Connection, path: &Path) -> Result<String, IpcError> {
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT document_id FROM documents WHERE canonical_path = ?1",
+            [path.to_string_lossy()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    Ok(existing.unwrap_or_else(|| document_id(path)))
+}
+
 fn upsert_doc(
     conn: &Connection,
     id: &str,
@@ -493,7 +708,7 @@ pub fn commit_document(
     if !scope_active(&tx, scope_id)? {
         return Ok(false);
     }
-    let id = document_id(m.path);
+    let id = doc_id_for(&tx, m.path)?;
     upsert_doc(&tx, &id, m, "PARSED", None)?;
     tx.execute("DELETE FROM chunks WHERE document_id = ?1", [&id])
         .map_err(err)?;
@@ -550,7 +765,7 @@ pub fn record_skipped(
     if !scope_active(&tx, scope_id)? {
         return Ok(false);
     }
-    let id = document_id(m.path);
+    let id = doc_id_for(&tx, m.path)?;
     upsert_doc(&tx, &id, m, status, Some(error))?;
     tx.execute("DELETE FROM chunks WHERE document_id = ?1", [&id])
         .map_err(err)?;

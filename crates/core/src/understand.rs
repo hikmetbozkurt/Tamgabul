@@ -38,6 +38,7 @@ pub enum FileTypeFilter {
     Text,
     Image,
     Audio,
+    Video,
 }
 
 impl FileTypeFilter {
@@ -46,10 +47,13 @@ impl FileTypeFilter {
         match self {
             FileTypeFilter::Any => None,
             FileTypeFilter::Pdf => Some(&["pdf"]),
-            FileTypeFilter::Document => Some(&["docx", "pptx", "xlsx", "odf", "rtf"]),
+            FileTypeFilter::Document => {
+                Some(&["docx", "pptx", "xlsx", "odf", "rtf", "doc", "xls", "ppt"])
+            }
             FileTypeFilter::Text => Some(&["markdown", "text", "markup"]),
             FileTypeFilter::Image => Some(&["image"]),
             FileTypeFilter::Audio => Some(&["audio"]),
+            FileTypeFilter::Video => Some(&["video"]),
         }
     }
 }
@@ -208,6 +212,11 @@ const TYPE_RULES: &[(&str, FileTypeFilter)] = &[
     ("mp3", FileTypeFilter::Audio),
     ("wav", FileTypeFilter::Audio),
     ("m4a", FileTypeFilter::Audio),
+    ("video*", FileTypeFilter::Video),
+    ("videolar*", FileTypeFilter::Video),
+    ("mp4", FileTypeFilter::Video),
+    ("mov", FileTypeFilter::Video),
+    ("mkv", FileTypeFilter::Video),
     ("pdf*", FileTypeFilter::Pdf),
     ("word belge*", FileTypeFilter::Document),
     ("word dosya*", FileTypeFilter::Document),
@@ -362,7 +371,7 @@ pub fn llm_schema() -> Value {
             "search_text": { "type": "string", "maxLength": 200 },
             "keywords": words(40, 8),
             "exclude": words(40, 4),
-            "file_type": { "enum": ["any", "pdf", "document", "text", "image", "audio"] },
+            "file_type": { "enum": ["any", "pdf", "document", "text", "image", "audio", "video"] },
             "date": { "enum": [
                 "any", "today", "yesterday", "this_week", "last_week",
                 "this_month", "last_month", "recent"
@@ -380,7 +389,7 @@ Fields:
 - search_text: the request as a short, self-contained search phrase in the user's language. If it refers to earlier turns ("şu timer olan", "that one"), include the topic from them. Keep names, code identifiers and file names exactly as written. Never add facts.
 - keywords: up to 8 single words likely to appear inside the file or its name: the important words of the request in base form without Turkish suffixes ("faturayı" -> "fatura"), plus close synonyms, the English/Turkish translation ("fatura" -> "invoice") and spelled-out abbreviations ("UK" -> "United Kingdom", "İngiltere"). No filler words, no dates, no file-type words.
 - exclude: words the user explicitly rejected ("X değil", "not X"), else [].
-- file_type: pdf, document (Word/Excel/PowerPoint), text, image (photo, screenshot), audio (recording) — only when the user asks for that kind of file, or keeps it from the active filters while refining; else any.
+- file_type: pdf, document (Word/Excel/PowerPoint), text, image (photo, screenshot), audio (recording), video — only when the user asks for that kind of file, or keeps it from the active filters while refining; else any.
 - date: only when the user gives a time (today, yesterday, this_week, last_week, this_month, last_month, recent); else any.
 - intent: "lookup_prior" when the user asks for a file you found or showed before ("geçen bana bulmuştun", "the one you showed me"); "summarize" when they want the content of the found file(s) summarized ("özetle", "ne yazıyor"); "refine" when the message changes or narrows the previous search; "clarify" only when the request is so vague that nothing meaningful can be searched ("şunu bul", "o dosya") and earlier turns do not help; otherwise "search".
 - clarify_question: one short question in the user's language when intent is clarify, else "". clarify_options: up to 4 short answers, else [].

@@ -174,12 +174,13 @@ For Turkish text in images, install the Turkish language with its OCR feature: *
 | Kind | Formats | How they are read |
 |---|---|---|
 | Text & code | `md`, `txt`, `csv`, `json`, `yaml`, `log`, `srt`, ~100 code extensions; `html`, `xml`, `svg`; `rtf` | UTF-8 / UTF-16 / Windows-1254 decoding, chunked with line numbers |
-| Documents | `docx`, `pptx`, `xlsx`, `odt`, `odp`, `ods` | text from the document XML |
+| Documents | `docx`, `pptx`, `xlsx`, `odt`, `odp`, `ods`; Office 97–2003 `doc`, `xls`, `ppt` | text from the document XML; legacy files from their binary streams (password-protected files are skipped) |
 | PDF | `pdf` | text layer; pages with almost no text are rendered and OCR'd (Windows) |
 | Images | `png`, `jpg`, `gif`, `bmp`, `ico`, `tiff`, `webp`, `tga`, `pnm`, `dds`, `hdr`, `exr`, `qoi`; `heic`, `avif`, `jxr`, camera RAW when the Windows codec is installed | image vector + OCR text + optional LLM description |
 | Audio | `wav`, `mp3`, `m4a`/`aac`, `flac`, `ogg`, `aiff`, `caf`, `mka` | 30 s segments embedded by the EmbeddingGemma 2 audio encoder |
+| Video | `mp4`, `m4v`, `mov`, `mkv`, `webm`, `avi`, `wmv`, `3gp`, `mpg`, `mts`, `m2ts` | one frame from the Windows thumbnailer (read like an image) + the audio track when its codec is supported (AAC, MP3, FLAC, Vorbis, PCM…); never loaded whole |
 
-Not read: legacy `.doc` / `.xls` / `.ppt`, Opus, WMA, video.
+Not read: Opus and WMA audio (also as video sound tracks), encrypted Office files.
 
 ## Project structure
 
@@ -223,7 +224,7 @@ More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish). Engineering
 - **No numbers yet.** Load time, memory, scan speed and search quality have not been benchmarked on a real machine. A bilingual evaluation set and runner are in [`examples/eval/`](examples/eval/README.md). The first scan with image descriptions is noticeably slower, because the LLM looks at every image once.
 - **Audio** is found by the meaning of the sound and by file name. There is no speech-to-text yet.
 - **Voice input/output (STT/TTS)** is not implemented.
-- **Folder watching** is not implemented. Rescan a folder to pick up changes (only changed files are processed).
+- **Folder watching** rescans a folder about 10 seconds after changes stop (only changed files are processed). A moved or renamed folder can be **relinked** to its new place without re-indexing.
 
 ## Roadmap
 
