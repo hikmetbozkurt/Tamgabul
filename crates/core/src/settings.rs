@@ -68,7 +68,9 @@ pub struct AppSettings {
     /// LLM jobs, each on/off (used only when an LLM is set up): understand
     /// the request, pick and answer from the results, describe images
     /// while scanning.
-    pub llm_plan: bool,
+    /// (Named `llm_understand`, not `llm_plan`, so the new default
+    /// applies to settings saved before the evaluation.)
+    pub llm_understand: bool,
     pub llm_pick: bool,
     pub llm_caption: bool,
 }
@@ -84,7 +86,9 @@ impl Default for AppSettings {
             history_enabled: true,
             history_retention: HistoryRetention::Days90,
             indexing_mode: IndexingMode::Manual,
-            llm_plan: true,
+            // Off by default: in the evaluation it did not raise accuracy
+            // and added ~1 s per search (ADR 025).
+            llm_understand: false,
             llm_pick: true,
             llm_caption: true,
         }

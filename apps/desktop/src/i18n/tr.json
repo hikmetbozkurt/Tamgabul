@@ -493,7 +493,7 @@
   "search.notice.llm_unsure": "Yerel LLM net bir eşleşme bulamadı; bunlar aramanın en iyi eşleşmeleri.",
   "settings.llmRoles": "LLM görevleri",
   "settings.llmRolesHint": "Her görev yalnızca bir LLM kuruluysa çalışır. Aramana yardımı olmayanı kapat.",
-  "settings.llm_plan": "İsteği anlama",
+  "settings.llm_understand": "İsteği anlama",
   "settings.llm_pick": "Sonuçlardan seçme ve yanıtlama",
   "settings.llm_caption": "Tarama sırasında görselleri betimleme"
 }

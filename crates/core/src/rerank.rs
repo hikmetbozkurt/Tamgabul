@@ -83,7 +83,7 @@ pub fn rerank_schema(n: usize, mode: Mode) -> Value {
 }
 
 const SYSTEM: &str = r#"You pick which of the user's own files match their request. Reply with the JSON object only.
-- relevant: the numbers of the files that are what the user is looking for, best first. Usually 1–3. Judge by meaning across Turkish and English ("vesikalık" = passport-style portrait, "profil fotoğrafı" = profile photo, "UK" = United Kingdom/İngiltere). Leave out files that only share a word. [] if none fits.
+- relevant: the numbers of the files that are what the user is looking for, best first. Usually 1–3. Judge by meaning across Turkish and English ("vesikalık" = passport-style portrait, "profil fotoğrafı" = profile photo, "UK" = United Kingdom/İngiltere). A file fits only if its subject is the thing asked for: a gas bill is not a phone bill, a horse photo is not a donkey photo, a German visa is not a French visa. Same category, a similar look or a shared word is not enough; other words for the same thing do fit (fatura = invoice = bill, sunucu = server = hosting). [] if none fits; that is a good answer.
 - answer: if the request is a question whose answer is written in one file's excerpt (a date, number, name), answer it in one short sentence in the user's language, using only that excerpt; else "".
 - answer_from: the number of that file, or "none".
 - summary: SUMMARY_LEN in the user's language on what the relevant files say that matters for the request. Put the file number in brackets right after each fact, e.g. "Kira 12.000 TL olarak yazıyor [2]." Use only facts from the excerpts; never guess. "" if the excerpts say nothing useful.

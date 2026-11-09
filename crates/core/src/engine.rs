@@ -63,10 +63,11 @@ pub struct Roles {
     pub pick: bool,
 }
 
+/// Defaults from the evaluation (ADR 025): picking helps, planning did not.
 impl Default for Roles {
     fn default() -> Self {
         Roles {
-            plan: true,
+            plan: false,
             pick: true,
         }
     }
@@ -87,6 +88,8 @@ pub struct Outcome {
     pub picked_by_llm: bool,
     /// The first `picked_count` of `found` are the LLM's picks.
     pub picked_count: usize,
+    /// The LLM checked the results and none fits the request.
+    pub llm_unsure: bool,
     pub notice: Option<String>,
 }
 
@@ -203,6 +206,7 @@ pub fn run(
         summary: None,
         picked_by_llm: false,
         picked_count: 0,
+        llm_unsure: false,
         notice: None,
     };
 
@@ -278,9 +282,9 @@ pub fn run(
     } else {
         rerank::Mode::Pick
     };
-    let min = if plan.summarize { 1 } else { 2 };
     let pick_on = q.roles.pick && models.has_llm() && searchable;
-    if !browse && found.len() >= min {
+    // Even a single hit is checked: "not found" beats a wrong file.
+    if !browse && !found.is_empty() {
         let cands = if pick_on {
             candidates(conn, &found, mode)
         } else {
@@ -332,7 +336,9 @@ pub fn run(
                 found = picked;
             }
             other => {
-                if other.is_some() && out.notice.is_none() {
+                if other.is_some() {
+                    // More useful than "filters relaxed": nothing fits.
+                    out.llm_unsure = true;
                     out.notice = Some("llm_unsure".into());
                 }
                 found.retain(|f| f.hit.score >= best * RELATIVE_FLOOR);

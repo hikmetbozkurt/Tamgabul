@@ -136,7 +136,7 @@ fn run_search(app: &AppHandle, req: SearchRequest) -> Result<SearchResponse, Ipc
             (
                 s.history_enabled,
                 Roles {
-                    plan: s.llm_plan,
+                    plan: s.llm_understand,
                     pick: s.llm_pick,
                 },
             )

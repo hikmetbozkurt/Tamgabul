@@ -14,5 +14,7 @@ hotkey: string, widget_position: WidgetPosition, mic_mode: MicMode, launch_at_st
  * LLM jobs, each on/off (used only when an LLM is set up): understand
  * the request, pick and answer from the results, describe images
  * while scanning.
+ * (Named `llm_understand`, not `llm_plan`, so the new default
+ * applies to settings saved before the evaluation.)
  */
-llm_plan: boolean, llm_pick: boolean, llm_caption: boolean, };
+llm_understand: boolean, llm_pick: boolean, llm_caption: boolean, };

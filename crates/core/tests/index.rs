@@ -1233,7 +1233,10 @@ fn ask(e: &Env, models: &dyn QueryModels, text: &str, session: Option<&str>) -> 
             allow_clarify: true,
             now: 1_793_700_000,
             utc_offset: 0,
-            roles: Default::default(),
+            roles: engine::Roles {
+                plan: true,
+                pick: true,
+            },
         },
     )
     .unwrap()

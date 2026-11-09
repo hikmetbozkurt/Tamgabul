@@ -493,7 +493,7 @@
   "search.notice.llm_unsure": "The local LLM found no clear match; these are the best matches by search.",
   "settings.llmRoles": "LLM jobs",
   "settings.llmRolesHint": "Each job runs only if an LLM is set up. Turn off any that do not help your searches.",
-  "settings.llm_plan": "Understand the request",
+  "settings.llm_understand": "Understand the request",
   "settings.llm_pick": "Pick and answer from results",
   "settings.llm_caption": "Describe images while scanning"
 }

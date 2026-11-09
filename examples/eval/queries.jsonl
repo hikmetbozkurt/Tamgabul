@@ -39,3 +39,7 @@
 {"id": "t03", "query": "mercmek corbasi", "kind": "typo", "expect": ["recipe_mercimek.md"]}
 {"id": "n01", "query": "mars kolonisi bütçe tablosu", "kind": "none", "expect": []}
 {"id": "n02", "query": "wedding guest list", "kind": "none", "expect": []}
+{"id": "n03", "query": "ABD vizesi başvuru formu", "kind": "none", "expect": []}
+{"id": "n04", "query": "su faturası", "kind": "none", "expect": []}
+{"id": "n05", "query": "lasagna recipe", "kind": "none", "expect": []}
+{"id": "n06", "query": "Japonya gezi planı", "kind": "none", "expect": []}

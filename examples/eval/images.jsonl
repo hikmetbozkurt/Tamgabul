@@ -14,3 +14,5 @@
 {"id":"i14","query":"drawing of a cat","kind":"image","expect":["IMG_0719.png"]}
 {"id":"i15","query":"köpek fotoğrafı","kind":"none","expect":[]}
 {"id":"i16","query":"pasaport fotokopisi","kind":"none","expect":[]}
+{"id":"i17","query":"photo of a dog","kind":"none","expect":[]}
+{"id":"i18","query":"uçak bileti değil tren bileti görseli","kind":"none","expect":[]}

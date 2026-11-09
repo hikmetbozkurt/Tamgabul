@@ -441,8 +441,7 @@ fn run_set(label: &str, ix: &Index, models: &Models<'_>, roles: Roles, queries: 
             .position(|t| want.contains(&t.as_str()))
             .map(|r| r + 1);
         // "Not found" accuracy: nothing shown, or (with picks) nothing picked.
-        let empty = titles.is_empty()
-            || (out.picked_count == 0 && out.notice.as_deref() == Some("llm_unsure"));
+        let empty = titles.is_empty() || out.llm_unsure;
         let tally = by_kind.entry(kind.to_string()).or_default();
         for t in [&mut *tally, &mut all] {
             t.n += 1;
@@ -655,7 +654,12 @@ fn main() {
     let mut img_runs = Vec::new();
     if let Some(folder) = &a.images {
         let iq = read_queries(&a.image_queries);
-        let last = *modes.last().unwrap_or(&Mode::Rules);
+        // The app default (pick only) when it is measured, else the last mode.
+        let last = if modes.contains(&Mode::Pick) {
+            Mode::Pick
+        } else {
+            *modes.last().unwrap_or(&Mode::Rules)
+        };
         let plain = index(folder, &ec, &mut NoDescriber);
         println!(
             "\n  images         {} files in {:.1} s (no captions)",
