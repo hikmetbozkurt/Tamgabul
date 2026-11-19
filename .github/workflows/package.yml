@@ -1,0 +1,81 @@
+name: package
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Installer platforms to build (unsigned dev artifacts)
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+
+jobs:
+  windows-installer:
+    if: github.event.inputs.target == 'all' || github.event.inputs.target == 'windows'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Frontend install
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build Windows bundles (NSIS + MSI)
+        working-directory: apps/desktop
+        run: npm run tauri build -- --bundles nsis,msi
+      - name: Compute bundle SHA-256 checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-artifacts | Out-Null
+          Get-ChildItem -Path target\release\bundle -Recurse -File | Where-Object {
+            $_.Extension -in ".exe", ".msi"
+          } | ForEach-Object {
+            Copy-Item $_.FullName dist-artifacts\
+          }
+          $sums = Get-ChildItem dist-artifacts -File | Sort-Object Name | ForEach-Object {
+            $h = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$h  $($_.Name)"
+          }
+          [System.IO.File]::WriteAllText("dist-artifacts\SHA256SUMS.txt", ($sums -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamgabul-windows-installers
+          path: dist-artifacts/*
+
+  macos-installer:
+    if: github.event.inputs.target == 'all' || github.event.inputs.target == 'macos'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Frontend install
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build macOS bundles (.app + .dmg)
+        working-directory: apps/desktop
+        run: npm run tauri build -- --bundles app,dmg
+      - name: Compute bundle SHA-256 checksums
+        run: |
+          mkdir -p dist-artifacts
+          find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -exec cp {} dist-artifacts/ \;
+          if [ -d target/release/bundle/macos/Tamgabul.app ]; then
+            ditto -c -k --sequesterRsrc --keepParent target/release/bundle/macos/Tamgabul.app dist-artifacts/Tamgabul.app.zip
+          fi
+          (cd dist-artifacts && shasum -a 256 * > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamgabul-macos-installers
+          path: dist-artifacts/*

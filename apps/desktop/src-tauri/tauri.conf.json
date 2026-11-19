@@ -46,12 +46,46 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Find local files by describing them, completely offline.",
+    "longDescription": "Tamgabul is a local-only desktop widget that finds files in your granted folders by meaning, words, text in images, and file names using local models.",
+    "copyright": "Copyright 2026 Tamgabul Contributors",
+    "license": "Apache-2.0",
+    "licenseFile": "../../../LICENSE",
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../../../LICENSE": "notices/LICENSE",
+      "../../../NOTICE": "notices/NOTICE",
+      "../../../THIRD_PARTY_NOTICES.md": "notices/THIRD_PARTY_NOTICES.md",
+      "../../../docs/HELP.md": "docs/HELP.md",
+      "../../../docs/HELP.tr.md": "docs/HELP.tr.md"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "skip"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Turkish"],
+        "displayLanguageSelector": true
+      },
+      "wix": {
+        "language": ["en-US", "tr-TR"]
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist",
+      "infoPlist": "Info.plist"
+    }
   }
 }

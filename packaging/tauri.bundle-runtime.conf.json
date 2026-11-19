@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../LICENSE": "notices/LICENSE",
+      "../../../NOTICE": "notices/NOTICE",
+      "../../../THIRD_PARTY_NOTICES.md": "notices/THIRD_PARTY_NOTICES.md",
+      "../../../docs/HELP.md": "docs/HELP.md",
+      "../../../docs/HELP.tr.md": "docs/HELP.tr.md",
+      "../../../packaging/staged/llama/*": "llama/"
+    }
+  }
+}
