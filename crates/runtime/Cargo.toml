@@ -11,8 +11,9 @@ tamgabul-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-# Plain HTTP to the worker on 127.0.0.1 only. No TLS, no proxy.
-ureq = { version = "2.12", default-features = false, features = ["json"] }
+# Loopback-only HTTP to local workers (`client.rs` enforces loopback); TLS is
+# used solely by explicit user-approved model downloads (`download.rs`).
+ureq = { version = "2.12", default-features = false, features = ["json", "tls"] }
 base64 = "0.22"
 getrandom = "0.3"
 sha2 = "0.10"

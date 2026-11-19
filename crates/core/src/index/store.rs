@@ -14,9 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::dto::RevokeMode;
+use crate::dto::{ExclusionReason, RevokeMode, ScopeExclusion};
 use crate::error::{ErrorCode, IpcError};
-use crate::index::walk::{is_within, SourceKind};
+use crate::index::walk::{self, is_within, SourceKind};
 
 fn err(e: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::Internal, format!("index store: {e}"))
@@ -203,6 +203,207 @@ pub fn exclusion_count(conn: &Connection, scope_id: &str) -> Result<u32, IpcErro
         |r| r.get(0),
     )
     .map_err(err)
+}
+
+fn parse_exclusion_reason(s: &str) -> ExclusionReason {
+    match s {
+        "child_revoked" => ExclusionReason::ChildRevoked,
+        "protected_path" => ExclusionReason::ProtectedPath,
+        _ => ExclusionReason::UserExclusion,
+    }
+}
+
+fn exclusion_row(r: &rusqlite::Row<'_>, scope_id: &str) -> rusqlite::Result<ScopeExclusion> {
+    let id: String = r.get(0)?;
+    let canonical: String = r.get(1)?;
+    let reason: String = r.get(2)?;
+    let created_at: String = r.get(3)?;
+    Ok(ScopeExclusion {
+        exclusion_id: id,
+        scope_id: scope_id.to_string(),
+        display_path: walk::display(Path::new(&canonical)),
+        reason: parse_exclusion_reason(&reason),
+        created_at,
+    })
+}
+
+fn require_editable_scope(conn: &Connection, scope_id: &str) -> Result<Scope, IpcError> {
+    let scope = get_scope(conn, scope_id)?
+        .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
+    if matches!(scope.state, ScopeState::Revoking | ScopeState::Revoked) {
+        return Err(IpcError::new(ErrorCode::ScopeRevoked, "folder was removed"));
+    }
+    Ok(scope)
+}
+
+pub fn list_exclusions(conn: &Connection, scope_id: &str) -> Result<Vec<ScopeExclusion>, IpcError> {
+    require_editable_scope(conn, scope_id)?;
+    let mut st = conn
+        .prepare(
+            "SELECT exclusion_id, canonical_path, reason, created_at
+             FROM scope_exclusions WHERE parent_scope_id = ?1
+             ORDER BY created_at, exclusion_id",
+        )
+        .map_err(err)?;
+    let v = st
+        .query_map([scope_id], |r| exclusion_row(r, scope_id))
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(v)
+}
+
+/// Exclude a subfolder inside `scope_id`: blocks it immediately from search
+/// and future scans, and unlinks/purges exclusive derived rows without
+/// touching source files.
+pub fn add_exclusion(
+    conn: &mut Connection,
+    scope_id: &str,
+    raw_path: &str,
+) -> Result<ScopeExclusion, IpcError> {
+    let scope = require_editable_scope(conn, scope_id)?;
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "empty exclusion path",
+        ));
+    }
+    let raw = Path::new(trimmed);
+    if walk::is_device_path(raw) {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "invalid exclusion path",
+        ));
+    }
+    let candidate = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        let rel = trimmed.trim_start_matches(['\\', '/']);
+        if rel.is_empty() {
+            return Err(IpcError::new(
+                ErrorCode::ScopeNotAuthorized,
+                "cannot exclude the folder itself",
+            ));
+        }
+        scope.canonical_path.join(rel)
+    };
+    let target = walk::canonical(&candidate)?;
+    if !target.is_dir() {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "exclusion must be a folder",
+        ));
+    }
+    if !is_within(&target, &scope.canonical_path) {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "exclusion must be inside the folder",
+        ));
+    }
+    if is_within(&scope.canonical_path, &target) {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "cannot exclude the folder itself",
+        ));
+    }
+    for existing in list_exclusions(conn, scope_id)? {
+        let ex_path = Path::new(&existing.display_path);
+        if is_within(&target, ex_path) && is_within(ex_path, &target) {
+            return Ok(existing);
+        }
+    }
+
+    let id = new_id("x", scope_id);
+    let tx = conn.transaction().map_err(err)?;
+    tx.execute(
+        "INSERT INTO scope_exclusions(exclusion_id, parent_scope_id, canonical_path, reason)
+         VALUES (?1, ?2, ?3, 'user_exclusion')",
+        params![id, scope_id, target.to_string_lossy()],
+    )
+    .map_err(err)?;
+
+    let docs: Vec<(String, String)> = {
+        let mut st = tx
+            .prepare(
+                "SELECT d.document_id, d.canonical_path FROM documents d
+                 JOIN document_scopes s ON s.document_id = d.document_id
+                 WHERE s.scope_id = ?1",
+            )
+            .map_err(err)?;
+        let v = st
+            .query_map([scope_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(err)?;
+        v
+    };
+    let mut unlinked = 0u32;
+    for (doc_id, p) in docs {
+        if is_within(Path::new(&p), &target) {
+            tx.execute(
+                "DELETE FROM document_scopes WHERE document_id = ?1 AND scope_id = ?2",
+                params![doc_id, scope_id],
+            )
+            .map_err(err)?;
+            unlinked += 1;
+        }
+    }
+    if unlinked > 0 {
+        delete_orphans(&tx)?;
+        let count = scope_doc_count(&tx, scope_id)?;
+        tx.execute(
+            "UPDATE source_scopes SET file_count = ?2 WHERE scope_id = ?1",
+            params![scope_id, count],
+        )
+        .map_err(err)?;
+    }
+    audit(&tx, "exclusion_added", scope_id)?;
+    let entry = tx
+        .query_row(
+            "SELECT exclusion_id, canonical_path, reason, created_at
+             FROM scope_exclusions WHERE exclusion_id = ?1",
+            [&id],
+            |r| exclusion_row(r, scope_id),
+        )
+        .map_err(err)?;
+    tx.commit().map_err(err)?;
+    if unlinked > 0 {
+        let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+    }
+    Ok(entry)
+}
+
+pub fn remove_exclusion(
+    conn: &Connection,
+    scope_id: &str,
+    exclusion_id: &str,
+) -> Result<(), IpcError> {
+    require_editable_scope(conn, scope_id)?;
+    let reason: Option<String> = conn
+        .query_row(
+            "SELECT reason FROM scope_exclusions WHERE exclusion_id = ?1 AND parent_scope_id = ?2",
+            params![exclusion_id, scope_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    let Some(reason) = reason else {
+        return Err(IpcError::new(ErrorCode::ScopeRevoked, "unknown exclusion"));
+    };
+    if reason == "protected_path" {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "protected exclusion cannot be removed",
+        ));
+    }
+    conn.execute(
+        "DELETE FROM scope_exclusions WHERE exclusion_id = ?1 AND parent_scope_id = ?2",
+        params![exclusion_id, scope_id],
+    )
+    .map_err(err)?;
+    audit(conn, "exclusion_removed", scope_id)?;
+    Ok(())
 }
 
 /// May content at `path` be shown? Some authorized scope must contain it and
@@ -739,8 +940,17 @@ pub fn vector_from_bytes(b: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+fn can_commit(conn: &Connection, scope_id: &str, path: &Path) -> Result<bool, IpcError> {
+    if !scope_active(conn, scope_id)? {
+        return Ok(false);
+    }
+    Ok(!exclusions_for(conn, scope_id)?
+        .iter()
+        .any(|e| is_within(path, e)))
+}
+
 /// Atomically replace a document's chunks and vectors. Returns `false`
-/// (and writes nothing) if the scope stopped being ACTIVE.
+/// (and writes nothing) if the scope stopped being ACTIVE or the path is excluded.
 pub fn commit_document(
     conn: &mut Connection,
     scope_id: &str,
@@ -749,7 +959,7 @@ pub fn commit_document(
     chunks: &[NewChunk],
 ) -> Result<bool, IpcError> {
     let tx = conn.transaction().map_err(err)?;
-    if !scope_active(&tx, scope_id)? {
+    if !can_commit(&tx, scope_id, m.path)? {
         return Ok(false);
     }
     let id = doc_id_for(&tx, m.path)?;
@@ -806,7 +1016,7 @@ pub fn record_skipped(
     error: &str,
 ) -> Result<bool, IpcError> {
     let tx = conn.transaction().map_err(err)?;
-    if !scope_active(&tx, scope_id)? {
+    if !can_commit(&tx, scope_id, m.path)? {
         return Ok(false);
     }
     let id = doc_id_for(&tx, m.path)?;

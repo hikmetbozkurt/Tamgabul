@@ -9,9 +9,9 @@ import type { IpcError } from "../bindings/IpcError";
 type Ctx = { api: Api; version: number; refresh: () => void };
 const DataCtx = createContext<Ctx | null>(null);
 
-/** Connects the UI to the Rust core and re-renders when data changes. */
-export function DataProvider({ children }: { children: ReactNode }) {
-  const api = useMemo<Api>(() => new CoreApi(), []);
+/** Connects the UI to the Rust core (or a test Api) and re-renders when data changes. */
+export function DataProvider({ children, api: injected }: { children: ReactNode; api?: Api }) {
+  const api = useMemo<Api>(() => injected ?? new CoreApi(), [injected]);
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
@@ -20,9 +20,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     refresh();
     return () => {
       unsub();
-      (api as { dispose?: () => void }).dispose?.();
+      if (!injected) (api as { dispose?: () => void }).dispose?.();
     };
-  }, [api, refresh]);
+  }, [api, injected, refresh]);
 
   // Tray actions and model lifecycle changes are done by the Rust core;
   // the UI only re-reads state.

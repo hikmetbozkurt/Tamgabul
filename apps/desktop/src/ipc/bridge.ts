@@ -60,10 +60,10 @@ export async function toggleMaximize(): Promise<void> {
   await getCurrentWindow().toggleMaximize();
 }
 
-export async function pickPath(directory: boolean, title: string): Promise<string | null> {
+export async function pickPath(directory: boolean, title: string, defaultPath?: string): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const r = await open({ directory, multiple: false, title });
+  const r = await open({ directory, multiple: false, title, defaultPath });
   return typeof r === "string" ? r : null;
 }
 

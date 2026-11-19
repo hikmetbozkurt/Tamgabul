@@ -8,12 +8,14 @@
 //! - [`process`] / [`worker`]: supervised workers on 127.0.0.1 with a
 //!   per-process token; they die with the app (Job Object on Windows).
 //! - [`client`]: HTTP calls to a worker.
+//! - [`download`]: optional explicit, consent-gated model downloader.
 //! - [`manager`]: on-demand load, idle unload, leases, shutdown.
 //!
 //! Models are never started at app launch and never stay resident without
 //! a policy that says so (docs/05).
 
 pub mod client;
+pub mod download;
 pub mod eg2;
 pub mod error;
 pub mod gguf;

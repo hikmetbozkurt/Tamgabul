@@ -6,7 +6,7 @@ export type ScopeSummary = { scope_id: string, display_path: string, status: Sco
 /**
  * 0..1 while scanning.
  */
-progress: number | null, include_label: string | null, exclusion_count: number, is_drive_root: boolean, parent_scope_id: string | null, 
+progress: number | null, include_label: string | null, exclusion_count: number, is_drive_root: boolean, is_network: boolean, parent_scope_id: string | null, 
 /**
  * Why the last scan stopped (status `error`); the index stays searchable.
  */

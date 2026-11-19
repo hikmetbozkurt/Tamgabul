@@ -164,6 +164,59 @@ ts_export! {
         pub state: StepState,
         pub detail: Option<String>,
     }
+
+    pub struct DownloadableFile {
+        pub filename: String,
+        #[ts(type = "number")]
+        pub size_bytes: u64,
+        pub sha256: String,
+    }
+
+    pub struct DownloadableModel {
+        pub preset_id: String,
+        pub category: ModelCategory,
+        pub display_name: String,
+        pub recommended: bool,
+        pub repo: String,
+        pub revision: String,
+        pub origin_host: String,
+        pub license_name: String,
+        pub license_url: String,
+        pub default_dir: String,
+        #[ts(type = "number")]
+        pub total_bytes: u64,
+        pub files: Vec<DownloadableFile>,
+        pub capabilities: Vec<String>,
+    }
+
+    pub struct DownloadModelRequest {
+        pub preset_id: String,
+        pub destination_dir: String,
+        pub consent: bool,
+    }
+
+    #[serde(rename_all = "snake_case")]
+    pub enum DownloadPhase {
+        Downloading,
+        Verifying,
+        Done,
+        Failed,
+        Cancelled,
+    }
+
+    pub struct DownloadProgress {
+        pub preset_id: String,
+        pub phase: DownloadPhase,
+        pub file_index: u32,
+        pub file_count: u32,
+        pub file_name: String,
+        #[ts(type = "number")]
+        pub bytes_done: u64,
+        #[ts(type = "number")]
+        pub bytes_total: u64,
+        pub destination_path: Option<String>,
+        pub error_key: Option<String>,
+    }
 }
 
 // ---------------------------------------------------------------- folders
@@ -184,6 +237,21 @@ ts_export! {
         RemoveGrantOnly,
     }
 
+    #[serde(rename_all = "snake_case")]
+    pub enum ExclusionReason {
+        UserExclusion,
+        ChildRevoked,
+        ProtectedPath,
+    }
+
+    pub struct ScopeExclusion {
+        pub exclusion_id: String,
+        pub scope_id: String,
+        pub display_path: String,
+        pub reason: ExclusionReason,
+        pub created_at: String,
+    }
+
     pub struct ScopeSummary {
         pub scope_id: String,
         pub display_path: String,
@@ -196,6 +264,7 @@ ts_export! {
         pub include_label: Option<String>,
         pub exclusion_count: u32,
         pub is_drive_root: bool,
+        pub is_network: bool,
         pub parent_scope_id: Option<String>,
         /// Why the last scan stopped (status `error`); the index stays searchable.
         pub error_code: Option<ErrorCode>,
@@ -227,6 +296,7 @@ ts_export! {
         pub preview_token: String,
         pub display_path: String,
         pub is_drive_root: bool,
+        pub is_network: bool,
         pub file_count: u32,
         pub est_index_mb: f64,
         pub cap_files: u32,
@@ -299,6 +369,26 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ScopeStatus::UpToDate).unwrap(),
             "\"up_to_date\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExclusionReason::UserExclusion).unwrap(),
+            "\"user_exclusion\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExclusionReason::ChildRevoked).unwrap(),
+            "\"child_revoked\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExclusionReason::ProtectedPath).unwrap(),
+            "\"protected_path\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DownloadPhase::Downloading).unwrap(),
+            "\"downloading\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DownloadPhase::Verifying).unwrap(),
+            "\"verifying\""
         );
     }
 

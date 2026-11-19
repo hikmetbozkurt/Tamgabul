@@ -17,6 +17,32 @@ pub struct Endpoint {
     pub token: String,
 }
 
+impl Endpoint {
+    /// True only for plain HTTP URLs whose authority host is loopback
+    /// (`127.0.0.1`, `[::1]`, or `localhost`) with no userinfo (`@`).
+    pub fn is_loopback(&self) -> bool {
+        let Some(rest) = self.base_url.strip_prefix("http://") else {
+            return false;
+        };
+        let authority = rest.split('/').next().unwrap_or("");
+        if authority.contains('@') {
+            return false;
+        }
+        let host = if let Some(inner) = authority.strip_prefix('[') {
+            let Some((h, tail)) = inner.split_once(']') else {
+                return false;
+            };
+            if !tail.is_empty() && !tail.starts_with(':') {
+                return false;
+            }
+            h
+        } else {
+            authority.split(':').next().unwrap_or("")
+        };
+        matches!(host, "127.0.0.1" | "::1" | "localhost")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Props {
     pub vision: bool,
@@ -47,6 +73,16 @@ impl Client {
         &self.ep
     }
 
+    fn check_loopback(&self) -> Result<(), RuntimeError> {
+        if self.ep.is_loopback() {
+            Ok(())
+        } else {
+            Err(RuntimeError::Request(
+                "non-loopback worker endpoint refused".into(),
+            ))
+        }
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.ep.base_url)
     }
@@ -74,6 +110,7 @@ impl Client {
 
     /// `Ok(true)` when the model is loaded, `Ok(false)` while loading (503).
     pub fn health(&self) -> Result<bool, RuntimeError> {
+        self.check_loopback()?;
         match self
             .agent
             .get(&self.url("/health"))
@@ -87,6 +124,7 @@ impl Client {
     }
 
     pub fn props(&self) -> Result<Props, RuntimeError> {
+        self.check_loopback()?;
         let v: Value = self
             .agent
             .get(&self.url("/props"))
@@ -100,6 +138,7 @@ impl Client {
 
     /// Text embeddings via the OpenAI-compatible endpoint, in input order.
     pub fn embed_texts(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, RuntimeError> {
+        self.check_loopback()?;
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
@@ -124,6 +163,7 @@ impl Client {
         marker: &str,
         media: &[&[u8]],
     ) -> Result<Vec<f32>, RuntimeError> {
+        self.check_loopback()?;
         if prompt.matches(marker).count() != media.len() {
             return Err(RuntimeError::Request("media marker count mismatch".into()));
         }
@@ -200,6 +240,7 @@ impl Client {
         schema: &Value,
         max_tokens: u32,
     ) -> Result<Value, RuntimeError> {
+        self.check_loopback()?;
         let msgs: Vec<Value> = messages.iter().map(ChatMessage::to_json).collect();
         let v: Value = self
             .agent
@@ -458,5 +499,46 @@ mod tests {
         let p = parse_props(&json!({"media_marker":"<m>"}));
         assert!(!p.vision);
         assert_eq!(p.media_marker, "<m>");
+    }
+
+    #[test]
+    fn endpoint_loopback_validation_rejects_remote_and_authority_tricks() {
+        let ep = |url: &str| Endpoint {
+            base_url: url.into(),
+            token: "t".into(),
+        };
+        assert!(ep("http://127.0.0.1:8080").is_loopback());
+        assert!(ep("http://127.0.0.1").is_loopback());
+        assert!(ep("http://[::1]:8080/health").is_loopback());
+        assert!(ep("http://localhost:11434").is_loopback());
+
+        assert!(!ep("https://127.0.0.1:8080").is_loopback());
+        assert!(!ep("http://127.0.0.1.evil.com:8080").is_loopback());
+        assert!(!ep("http://127.0.0.1@evil.com:8080").is_loopback());
+        assert!(!ep("http://0.0.0.0:8080").is_loopback());
+        assert!(!ep("http://192.168.1.10:8080").is_loopback());
+    }
+
+    #[test]
+    fn client_refuses_non_loopback_requests() {
+        for bad in ["https://example.com", "http://192.168.1.10:8080"] {
+            let c = Client::new(
+                Endpoint {
+                    base_url: bad.into(),
+                    token: "t".into(),
+                },
+                Duration::from_secs(1),
+            );
+            assert!(matches!(c.health(), Err(RuntimeError::Request(_))));
+            assert!(matches!(c.props(), Err(RuntimeError::Request(_))));
+            assert!(matches!(
+                c.embed_texts(&["hi".into()]),
+                Err(RuntimeError::Request(_))
+            ));
+            assert!(matches!(
+                c.chat_json(&[ChatMessage::user("hi")], &json!({}), 8),
+                Err(RuntimeError::Request(_))
+            ));
+        }
     }
 }

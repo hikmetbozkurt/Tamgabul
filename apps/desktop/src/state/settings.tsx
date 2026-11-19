@@ -38,10 +38,21 @@ type Ctx = {
 
 const SettingsCtx = createContext<Ctx | null>(null);
 
-export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(isTauri() ? null : browserSnapshot());
+export function SettingsProvider({
+  children,
+  initialSnapshot,
+  onUpdate,
+}: {
+  children: ReactNode;
+  initialSnapshot?: SettingsSnapshot;
+  onUpdate?: (next: AppSettings) => Promise<SettingsSnapshot>;
+}) {
+  const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(
+    initialSnapshot ?? (isTauri() ? null : browserSnapshot()),
+  );
 
   useEffect(() => {
+    if (initialSnapshot) return;
     if (isTauri()) {
       call<SettingsSnapshot>("get_settings").then(setSnapshot).catch(() => setSnapshot(browserSnapshot()));
       const p = on<SettingsSnapshot>("settings_changed", setSnapshot);
@@ -50,20 +61,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const onStorage = (e: StorageEvent) => e.key === LS_KEY && setSnapshot(browserSnapshot());
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [initialSnapshot]);
 
   const update = useCallback(
     async (patch: Partial<AppSettings>) => {
       if (!snapshot) return;
       const next = { ...snapshot.settings, ...patch };
-      if (isTauri()) {
+      if (onUpdate) {
+        setSnapshot(await onUpdate(next));
+      } else if (isTauri()) {
         setSnapshot(await call<SettingsSnapshot>("set_settings", { next }));
       } else {
         localStorage.setItem(LS_KEY, JSON.stringify(next));
         setSnapshot({ ...snapshot, settings: next });
       }
     },
-    [snapshot],
+    [snapshot, onUpdate],
   );
 
   if (!snapshot) return null;

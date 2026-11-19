@@ -41,8 +41,8 @@ export function ModelsPage() {
     </select>
   );
 
-  const actions = (m: ModelEntry | undefined, c: ModelCategory, big?: boolean) => {
-    const cls = big ? "btn btn-sm" : "btn btn-sm";
+  const actions = (m: ModelEntry | undefined, c: ModelCategory) => {
+    const cls = "btn btn-sm";
     if (!m) {
       return <button type="button" className="btn btn-sm btn-primary" onClick={() => setAdding(c)}><Icon name="plus" size={16} stroke={1.8} />{t("models.add")}</button>;
     }
@@ -118,7 +118,7 @@ export function ModelsPage() {
                 </div>
               )}
               <div className="model-actions">
-                {actions(emb, "embedding", true)}
+                {actions(emb, "embedding")}
                 <span className="small muted" style={{ marginLeft: "auto" }}>{t("models.swapNote")}</span>
               </div>
             </section>

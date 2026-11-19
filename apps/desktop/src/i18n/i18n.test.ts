@@ -28,7 +28,7 @@ describe("dictionaries", () => {
   });
 
   it("every literal key used in the source exists", () => {
-    const ns = "common|nav|window|privacy|health|category|status|legend|panel|search|result|file|match|preview|voice|memory|models|model|ttl|addModel|folders|revoke|settings|welcome|widget|error";
+    const ns = "common|nav|window|privacy|health|category|status|legend|panel|search|result|file|match|preview|voice|memory|models|model|ttl|addModel|folders|exclusions|revoke|settings|welcome|widget|error";
     const re = new RegExp(`"((?:${ns})\\.[A-Za-z0-9_.]+)"`, "g");
     const missing: string[] = [];
     for (const f of sourceFiles(join(dirname(fileURLToPath(import.meta.url)), ".."))) {
@@ -52,6 +52,9 @@ describe("dictionaries", () => {
       ...CATEGORIES.map((c) => `addModel.fail.readable.${c}`),
       "addModel.fail.format.llm", "addModel.fail.format.tts",
       ...["up_to_date", "scanning", "paused", "unreachable", "revoking"].map((s) => `folders.status.${s}`),
+      ...["user_exclusion", "child_revoked", "protected_path"].map((r) => `exclusions.reason.${r}`),
+      ...["downloading", "verifying", "done", "failed", "cancelled"].map((p) => `addModel.downloadPhase.${p}`),
+      ...["destination", "network", "status", "unsafeRedirect", "size", "checksum", "cancelled", "io"].map((e) => `addModel.downloadErr.${e}`),
       ...["ready", "degraded", "blocked"].map((s) => `health.level.${s}`),
       ...["green", "amber", "red", "neutral"].map((s) => `legend.${s}`),
       ...["previous_result", "semantic", "keyword", "filename", "image", "audio", "ocr", "filter", "caption"].map((s) => `match.${s}`),

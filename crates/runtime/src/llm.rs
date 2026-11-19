@@ -9,18 +9,43 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::eg2::file_type_name;
+use crate::eg2::{file_type_name, PinnedFile};
 use crate::error::RuntimeError;
 use crate::gguf::{read_header, GgufHeader};
 
-/// LFS SHA-256 of `ggml-org/gemma-4-E2B-it-GGUF` files (Hugging Face API).
-/// Other files work too; they are reported as unpinned.
+/// LFS SHA-256 and exact byte sizes of `ggml-org/gemma-4-E2B-it-GGUF`
+/// (verified at commit `2a8538c2e2d4687953a86c422c7c623cfd022880` via Hugging Face API).
+/// Earlier tested GGUF hashes are also kept recognized as pinned.
 pub const PINNED_REPO: &str = "ggml-org/gemma-4-E2B-it-GGUF";
+pub const PINNED_COMMIT: &str = "2a8538c2e2d4687953a86c422c7c623cfd022880";
+
+pub const Q4_0_MODEL: PinnedFile = PinnedFile {
+    name: "gemma-4-E2B-it-Q4_0.gguf",
+    size_bytes: 2_841_481_184,
+    sha256: "8e30dff3ac4c8434c49a7036fa15564bdbb6044e42bf04550bf1a096ad7e6a52",
+};
+pub const MMPROJ_Q8_0: PinnedFile = PinnedFile {
+    name: "mmproj-gemma-4-E2B-it-Q8_0.gguf",
+    size_bytes: 557_368_096,
+    sha256: "042cc2561806cd3b5cb5efb25cab76911e3100c43cc09d854904f921924b1429",
+};
+
 pub const PINNED_SHA256: &[(&str, &str)] = &[
+    (Q4_0_MODEL.name, Q4_0_MODEL.sha256),
     (
-        "gemma-4-E2B-it-Q4_0.gguf",
-        "8e30dff3ac4c8434c49a7036fa15564bdbb6044e42bf04550bf1a096ad7e6a52",
+        "gemma-4-E2B-it-Q8_0.gguf",
+        "c36d5e6be0d91124d8b995f5ad4e1ab0d307f6d95cdd08308820350dbd96ad15",
     ),
+    (
+        "gemma-4-E2B-it-BF16.gguf",
+        "64fd524bfc9d53be67c27a63ddd98df0930883a4bcb855f8bc60470f6c4ef5ee",
+    ),
+    (MMPROJ_Q8_0.name, MMPROJ_Q8_0.sha256),
+    (
+        "mmproj-gemma-4-E2B-it-BF16.gguf",
+        "81a9cc75a12f1cd9fa91d69896794e1791489c423a59fbf0d50cf5ad633493c0",
+    ),
+    // Earlier upstream revision hashes verified on user copies (docs/19).
     (
         "gemma-4-E2B-it-Q8_0.gguf",
         "996d08777aadc6bfd3c7375ef70ba25a0f55240075860754fdb18d6d860aa63a",

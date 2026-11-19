@@ -1,6 +1,6 @@
 //! Path safety and bounded, read-only folder traversal (docs/07).
 //!
-//! - Roots are canonicalized; network (UNC) roots are refused for now.
+//! - Roots are canonicalized; network (UNC) roots require explicit separate grant.
 //! - Never follows symlinks, junctions or other reparse-point directories,
 //!   so a scan cannot escape its root or loop.
 //! - Skips cloud placeholders (OneDrive "online-only" files) so a scan never
@@ -66,6 +66,8 @@ pub const DRIVE_ROOT_EXCLUDES: &[&str] = &[
     "private",
     "system",
     "library",
+    "volumes",
+    "cores",
 ];
 
 /// File kinds indexed. Classification is by extension; content is still
@@ -331,26 +333,84 @@ pub fn canonical(p: &Path) -> Result<PathBuf, IpcError> {
     Ok(simplify(c))
 }
 
-fn simplify(p: PathBuf) -> PathBuf {
-    #[cfg(windows)]
-    {
-        let s = p.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\") {
-            if !rest.starts_with("UNC\\") {
-                return PathBuf::from(rest.to_string());
-            }
+#[cfg(any(windows, test))]
+fn simplify_windows_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        if !is_device_path(&p) {
+            return PathBuf::from(rest.to_string());
         }
     }
     p
 }
 
+fn simplify(p: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        simplify_windows_prefix(p)
+    }
+    #[cfg(not(windows))]
+    {
+        p
+    }
+}
+
+/// Windows device namespace paths (`\\.\...`, or `\\?\...` other than drive
+/// letters `\\?\X:\...` or UNC `\\?\UNC\...`).
+pub fn is_device_path(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    if s.starts_with(r"\\.\") {
+        return true;
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        if rest.starts_with("UNC\\") {
+            return false;
+        }
+        let b = rest.as_bytes();
+        let is_drive = b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && (b[2] == b'\\' || b[2] == b'/');
+        return !is_drive;
+    }
+    false
+}
+
+/// True for UNC network paths (`\\server\share...` or `\\?\UNC\server\share...`),
+/// excluding Windows device paths (`\\.\...` and non-UNC `\\?\...`).
 pub fn is_network_path(p: &Path) -> bool {
     let s = p.to_string_lossy();
-    s.starts_with(r"\\") && !s.starts_with(r"\\?\") || s.starts_with(r"\\?\UNC\")
+    s.starts_with(r"\\?\UNC\")
+        || (s.starts_with(r"\\") && !s.starts_with(r"\\?\") && !s.starts_with(r"\\.\"))
+}
+
+/// True when `p` is a UNC network path with non-empty server and share segments
+/// and no `.` or `..` traversal in server/share.
+pub fn is_valid_unc_path(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    let rest = if let Some(r) = s.strip_prefix(r"\\?\UNC\") {
+        r
+    } else if s.starts_with(r"\\") && !s.starts_with(r"\\?\") && !s.starts_with(r"\\.\") {
+        &s[2..]
+    } else {
+        return false;
+    };
+    let mut parts = rest.split(['\\', '/']);
+    let Some(server) = parts.next() else {
+        return false;
+    };
+    let Some(share) = parts.next() else {
+        return false;
+    };
+    let valid_part = |seg: &str| !seg.is_empty() && seg != "." && seg != "..";
+    valid_part(server) && valid_part(share)
 }
 
 pub fn is_drive_root(p: &Path) -> bool {
-    p.parent().is_none()
+    p.parent().is_none() && !is_network_path(p)
 }
 
 /// Is `path` equal to or inside `root`? Component-wise, case-insensitive on
@@ -386,7 +446,7 @@ const ATTR_OFFLINE: u32 = 0x1000;
 const ATTR_RECALL_ON_OPEN: u32 = 0x4_0000;
 const ATTR_RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
 
-fn excluded_name(name: &str, at_drive_root: bool) -> bool {
+pub fn is_excluded_dir_name(name: &str, at_drive_root: bool) -> bool {
     let n = name.to_lowercase();
     EXCLUDED_DIR_NAMES.contains(&n.as_str())
         || (at_drive_root && DRIVE_ROOT_EXCLUDES.contains(&n.as_str()))
@@ -439,7 +499,7 @@ pub fn walk(root: &Path, deny: &[PathBuf], limits: Limits, cancel: &AtomicBool) 
                     continue;
                 }
                 let at_root = root_is_drive && depth == 0;
-                if excluded_name(&name, at_root)
+                if is_excluded_dir_name(&name, at_root)
                     || name.starts_with('.')
                     || (a & ATTR_HIDDEN != 0 && a & ATTR_SYSTEM != 0)
                 {
@@ -623,6 +683,54 @@ mod tests {
         assert!(!is_drive_root(Path::new("/home")));
         assert!(is_network_path(Path::new(r"\\server\share")));
         assert!(!is_network_path(Path::new(r"C:\x")));
+    }
+
+    #[test]
+    fn unc_and_device_paths() {
+        assert!(is_network_path(Path::new(r"\\nas\docs")));
+        assert!(is_network_path(Path::new(r"\\?\UNC\nas\docs\2026")));
+        assert!(!is_network_path(Path::new(r"\\.\PhysicalDrive0")));
+        assert!(!is_network_path(Path::new(r"\\?\C:\Users")));
+        assert!(!is_network_path(Path::new(r"\\?\Volume{1234}\")));
+
+        assert!(is_device_path(Path::new(r"\\.\pipe\tamgabul")));
+        assert!(is_device_path(Path::new(r"\\?\Volume{1234}\")));
+        assert!(!is_device_path(Path::new(r"\\?\C:\Users")));
+        assert!(!is_device_path(Path::new(r"\\?\UNC\nas\docs")));
+
+        assert!(is_valid_unc_path(Path::new(r"\\nas\docs")));
+        assert!(is_valid_unc_path(Path::new(r"\\nas\docs\")));
+        assert!(is_valid_unc_path(Path::new(r"\\nas\docs\finance")));
+        assert!(is_valid_unc_path(Path::new(r"\\?\UNC\nas\docs\finance")));
+        assert!(!is_valid_unc_path(Path::new(r"\\")));
+        assert!(!is_valid_unc_path(Path::new(r"\\nas")));
+        assert!(!is_valid_unc_path(Path::new(r"\\nas\")));
+        assert!(!is_valid_unc_path(Path::new(r"\\..\share")));
+        assert!(!is_valid_unc_path(Path::new(r"\\nas\..")));
+        assert!(!is_valid_unc_path(Path::new(r"\\.\pipe\foo")));
+        assert!(!is_valid_unc_path(Path::new(r"C:\Users")));
+
+        assert!(!is_drive_root(Path::new(r"\\nas\docs")));
+        #[cfg(windows)]
+        {
+            assert!(is_drive_root(Path::new(r"C:\")));
+            assert!(is_within(
+                Path::new(r"\\NAS\Docs\2026"),
+                Path::new(r"\\nas\docs")
+            ));
+            assert!(!is_within(
+                Path::new(r"\\nas\docs2\2026"),
+                Path::new(r"\\nas\docs")
+            ));
+        }
+        assert_eq!(
+            simplify_windows_prefix(PathBuf::from(r"\\?\UNC\nas\docs\sub")),
+            PathBuf::from(r"\\nas\docs\sub")
+        );
+        assert_eq!(
+            simplify_windows_prefix(PathBuf::from(r"\\?\C:\Users\me")),
+            PathBuf::from(r"C:\Users\me")
+        );
     }
 
     #[test]

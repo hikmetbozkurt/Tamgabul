@@ -63,9 +63,12 @@ fn model_listener(app: AppHandle) -> Listener {
     })
 }
 
-/// Stop every model worker and wait until the processes are gone.
+/// Stop every model worker (and any active download/validation) and wait until
+/// the processes are gone.
 pub fn stop_models(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
+        let _ = models::cancel_slot(&state.model_ops.validation_cancel);
+        let _ = models::cancel_slot(&state.model_ops.download_cancel);
         state.models.shutdown();
     }
 }
@@ -155,6 +158,9 @@ fn main() {
             models::list_models,
             models::validate_model,
             models::cancel_validation,
+            models::list_downloadable_models,
+            models::download_model,
+            models::cancel_model_download,
             models::register_model,
             models::load_model,
             models::unload_model,
@@ -169,6 +175,9 @@ fn main() {
             scopes::cancel_index,
             scopes::set_watching,
             scopes::relink_scope,
+            scopes::list_scope_exclusions,
+            scopes::add_scope_exclusion,
+            scopes::remove_scope_exclusion,
             scopes::revoke_scope,
             search_cmd::search,
             search_cmd::preview_result,
@@ -186,8 +195,16 @@ fn main() {
         .run(|app, event| {
             // Any exit path (tray Quit, OS logoff, last-resort exit) ends the
             // workers. On Windows the Job Object also covers crashes.
-            if let RunEvent::Exit = event {
-                stop_models(app);
+            match event {
+                RunEvent::Exit => stop_models(app),
+                #[cfg(target_os = "macos")]
+                RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } if !has_visible_windows => {
+                    windows::show_widget(app);
+                }
+                _ => {}
             }
         });
 }

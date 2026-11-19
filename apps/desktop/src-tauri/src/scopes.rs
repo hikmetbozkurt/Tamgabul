@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 
 use tamgabul_core::db;
 use tamgabul_core::describe::{self, Describer};
-use tamgabul_core::dto::{IndexStats, RevokeRequest, ScopePreview, ScopeStatus, ScopeSummary};
+use tamgabul_core::dto::{
+    IndexStats, RevokeRequest, ScopeExclusion, ScopePreview, ScopeStatus, ScopeSummary,
+};
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Progress};
 use tamgabul_core::index::media::Platform;
@@ -38,6 +40,7 @@ struct Preview {
     canonical: PathBuf,
     display: String,
     is_drive_root: bool,
+    is_network: bool,
     at: Instant,
 }
 
@@ -46,6 +49,21 @@ pub struct ScopesState {
     previews: Mutex<HashMap<String, Preview>>,
     jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
     progress: Mutex<HashMap<String, Progress>>,
+    indexing_paused: AtomicBool,
+}
+
+impl ScopesState {
+    pub fn toggle_paused(&self) -> bool {
+        let next = !self.indexing_paused.fetch_xor(true, Ordering::SeqCst);
+        if next {
+            if let Ok(jobs) = self.jobs.lock() {
+                for flag in jobs.values() {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        next
+    }
 }
 
 fn lock_err() -> IpcError {
@@ -138,17 +156,23 @@ fn summary(
         include_label: None,
         exclusion_count: store::exclusion_count(conn, &s.scope_id).unwrap_or(0),
         is_drive_root: s.is_drive_root,
+        is_network: walk::is_network_path(&s.canonical_path),
         parent_scope_id: store::parent_of(all, s).map(|p| p.scope_id.clone()),
         error_code,
     }
 }
 
 #[tauri::command]
-pub fn list_scopes(state: State<'_, AppState>) -> Result<Vec<ScopeSummary>, IpcError> {
-    with_db(&state, |conn| {
-        let all = store::visible_scopes(conn)?;
-        Ok(all.iter().map(|s| summary(&state, conn, &all, s)).collect())
+pub async fn list_scopes(app: AppHandle) -> Result<Vec<ScopeSummary>, IpcError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        with_db(&state, |conn| {
+            let all = store::visible_scopes(conn)?;
+            Ok(all.iter().map(|s| summary(&state, conn, &all, s)).collect())
+        })
     })
+    .await
+    .map_err(|_| IpcError::new(ErrorCode::Internal, "list scopes task failed"))?
 }
 
 #[tauri::command]
@@ -173,6 +197,26 @@ pub fn index_stats(state: State<'_, AppState>) -> Result<IndexStats, IpcError> {
     })
 }
 
+fn validate_scope_path(raw: &Path) -> Result<PathBuf, IpcError> {
+    if walk::is_device_path(raw) {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "invalid folder path",
+        ));
+    }
+    if walk::is_network_path(raw) && !walk::is_valid_unc_path(raw) {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "invalid network folder path",
+        ));
+    }
+    let canonical = walk::canonical(raw)?;
+    if !canonical.is_dir() {
+        return Err(IpcError::new(ErrorCode::ScopeNotAuthorized, "not a folder"));
+    }
+    Ok(canonical)
+}
+
 // ---------------------------------------------------------------- preview / grant
 
 #[tauri::command]
@@ -180,16 +224,8 @@ pub async fn preview_scope(app: AppHandle, path: String) -> Result<ScopePreview,
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let raw = PathBuf::from(path.trim());
-        if walk::is_network_path(&raw) {
-            return Err(IpcError::new(
-                ErrorCode::ScopeNotAuthorized,
-                "network folders are not supported yet",
-            ));
-        }
-        let canonical = walk::canonical(&raw)?;
-        if !canonical.is_dir() {
-            return Err(IpcError::new(ErrorCode::ScopeNotAuthorized, "not a folder"));
-        }
+        let canonical = validate_scope_path(&raw)?;
+        let is_network = walk::is_network_path(&raw) || walk::is_network_path(&canonical);
         let (deny, parent, existing) = with_db(&state, |conn| {
             let all = store::visible_scopes(conn)?;
             let existing = all
@@ -250,6 +286,7 @@ pub async fn preview_scope(app: AppHandle, path: String) -> Result<ScopePreview,
                     canonical,
                     display: display.clone(),
                     is_drive_root,
+                    is_network,
                     at: Instant::now(),
                 },
             );
@@ -261,6 +298,7 @@ pub async fn preview_scope(app: AppHandle, path: String) -> Result<ScopePreview,
             preview_token: token,
             display_path: display,
             is_drive_root,
+            is_network,
             file_count: report.files.len() as u32,
             est_index_mb: est / (1024.0 * 1024.0),
             cap_files: SCAN_CAP as u32,
@@ -303,12 +341,14 @@ pub fn grant_scope(
         error_summary: None,
         max_file_bytes: None,
     };
-    // Settings "Indexing: watch new folders" turns watching on at grant.
-    let watch_new = state
-        .settings
-        .lock()
-        .map(|s| s.indexing_mode == tamgabul_core::settings::IndexingMode::WhenIdle)
-        .unwrap_or(false);
+    // Settings "Indexing: watch new folders" turns watching on at grant for
+    // local folders. Network shares default to manual scans.
+    let watch_new = !p.is_network
+        && state
+            .settings
+            .lock()
+            .map(|s| s.indexing_mode == tamgabul_core::settings::IndexingMode::WhenIdle)
+            .unwrap_or(false);
     let s = with_db(&state, |conn| {
         store::insert_scope(conn, &scope)?;
         if watch_new {
@@ -332,6 +372,7 @@ pub fn start_index(
     state: State<'_, AppState>,
     scope_id: String,
 ) -> Result<(), IpcError> {
+    state.scopes.indexing_paused.store(false, Ordering::SeqCst);
     with_db(&state, |conn| {
         let s = store::get_scope(conn, &scope_id)?
             .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
@@ -349,18 +390,22 @@ pub fn start_index(
     Ok(())
 }
 
-#[tauri::command]
-pub fn cancel_index(state: State<'_, AppState>, scope_id: String) -> Result<(), IpcError> {
+fn cancel_running_job(state: &AppState, scope_id: &str) -> Result<(), IpcError> {
     if let Some(c) = state
         .scopes
         .jobs
         .lock()
         .map_err(|_| lock_err())?
-        .get(&scope_id)
+        .get(scope_id)
     {
         c.store(true, Ordering::SeqCst);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_index(state: State<'_, AppState>, scope_id: String) -> Result<(), IpcError> {
+    cancel_running_job(&state, &scope_id)
 }
 
 pub(crate) fn is_scanning(state: &AppState, scope_id: &str) -> bool {
@@ -370,6 +415,22 @@ pub(crate) fn is_scanning(state: &AppState, scope_id: &str) -> bool {
         .lock()
         .map(|j| j.contains_key(scope_id))
         .unwrap_or(false)
+}
+
+pub(crate) fn is_indexing_paused(state: &AppState) -> bool {
+    state.scopes.indexing_paused.load(Ordering::SeqCst)
+}
+
+/// Tray "Pause/Resume indexing": cancels active scans when pausing, and
+/// re-syncs watched folders when resuming.
+pub fn toggle_indexing(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let paused = state.scopes.toggle_paused();
+    if !paused {
+        crate::watch::sync(app);
+    }
+    notify(app);
+    paused
 }
 
 /// Watching on: changes in the folder are picked up by a delta scan after a
@@ -403,16 +464,7 @@ pub async fn relink_scope(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let raw = PathBuf::from(path.trim());
-        if walk::is_network_path(&raw) {
-            return Err(IpcError::new(
-                ErrorCode::ScopeNotAuthorized,
-                "network folders are not supported yet",
-            ));
-        }
-        let new_root = walk::canonical(&raw)?;
-        if !new_root.is_dir() {
-            return Err(IpcError::new(ErrorCode::ScopeNotAuthorized, "not a folder"));
-        }
+        let new_root = validate_scope_path(&raw)?;
         let summary_out = with_db(&state, |conn| {
             let scope = store::get_scope(conn, &scope_id)?
                 .ok_or_else(|| IpcError::new(ErrorCode::ScopeRevoked, "unknown folder"))?;
@@ -465,6 +517,45 @@ pub async fn relink_scope(
     .map_err(|_| IpcError::new(ErrorCode::Internal, "relink task failed"))?
 }
 
+// ---------------------------------------------------------------- exclusions
+
+#[tauri::command]
+pub fn list_scope_exclusions(
+    state: State<'_, AppState>,
+    scope_id: String,
+) -> Result<Vec<ScopeExclusion>, IpcError> {
+    with_db(&state, |conn| store::list_exclusions(conn, &scope_id))
+}
+
+#[tauri::command]
+pub fn add_scope_exclusion(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    scope_id: String,
+    path: String,
+) -> Result<ScopeExclusion, IpcError> {
+    cancel_running_job(&state, &scope_id)?;
+    let entry = with_db(&state, |conn| store::add_exclusion(conn, &scope_id, &path))?;
+    crate::watch::sync(&app);
+    notify(&app);
+    Ok(entry)
+}
+
+#[tauri::command]
+pub fn remove_scope_exclusion(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    scope_id: String,
+    exclusion_id: String,
+) -> Result<(), IpcError> {
+    with_db(&state, |conn| {
+        store::remove_exclusion(conn, &scope_id, &exclusion_id)
+    })?;
+    crate::watch::sync(&app);
+    notify(&app);
+    Ok(())
+}
+
 // ---------------------------------------------------------------- revoke
 
 #[tauri::command]
@@ -473,15 +564,7 @@ pub fn revoke_scope(
     state: State<'_, AppState>,
     req: RevokeRequest,
 ) -> Result<(), IpcError> {
-    if let Some(c) = state
-        .scopes
-        .jobs
-        .lock()
-        .map_err(|_| lock_err())?
-        .get(&req.scope_id)
-    {
-        c.store(true, Ordering::SeqCst);
-    }
+    cancel_running_job(&state, &req.scope_id)?;
     // Deny first, synchronously: from here on nothing of it is shown.
     let purge = with_db(&state, |conn| {
         store::begin_revoke(conn, &req.scope_id, req.mode, req.purge_history)
@@ -927,5 +1010,19 @@ mod tests {
             generation_spec(&m2).fingerprint(),
             "runtime upgrade keeps the index"
         );
+    }
+
+    #[test]
+    fn toggle_paused_cancels_running_jobs_and_resumes_cleanly() {
+        let s = ScopesState::default();
+        let flag = Arc::new(AtomicBool::new(false));
+        s.jobs.lock().unwrap().insert("s1".into(), flag.clone());
+
+        assert!(s.toggle_paused());
+        assert!(s.indexing_paused.load(Ordering::SeqCst));
+        assert!(flag.load(Ordering::SeqCst));
+
+        assert!(!s.toggle_paused());
+        assert!(!s.indexing_paused.load(Ordering::SeqCst));
     }
 }

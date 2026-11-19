@@ -104,6 +104,12 @@ pub fn current_version(conn: &Connection) -> Result<u32, IpcError> {
 
 pub fn migrate(conn: &mut Connection, migrations: &[Migration]) -> Result<u32, IpcError> {
     let start = current_version(conn)?;
+    let latest = migrations.iter().map(|m| m.version).max().unwrap_or(0);
+    if start > latest {
+        return Err(db_err(format!(
+            "database schema v{start} is newer than supported v{latest}"
+        )));
+    }
     let mut version = start;
     // Table rebuilds (copy → drop → rename) must not cascade deletes, so
     // foreign keys are off while migrating and checked before each commit.

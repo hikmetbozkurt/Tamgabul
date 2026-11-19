@@ -8,9 +8,10 @@ import { useData, useResource } from "../../state/data";
 import { useSettings } from "../../state/settings";
 import { useToast } from "../../state/toast";
 import { formatMb, formatNumber, relativeTime } from "../../lib/format";
+import { isChildPath } from "../../lib/platform";
 import { pickPath, toIpcError } from "../../ipc/bridge";
 import { clearHashFlags, hashFlag } from "../../shell/router";
-import { AddFolderDialog, RevokeDialog } from "./FolderDialogs";
+import { AddFolderDialog, ExclusionsDialog, RevokeDialog } from "./FolderDialogs";
 
 const STATUS_TONE: Record<ScopeSummary["status"], StatusTone> = {
   up_to_date: "green",
@@ -31,6 +32,7 @@ export function FoldersPage() {
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<ScopeSummary | null>(null);
+  const [excluding, setExcluding] = useState<ScopeSummary | null>(null);
 
   useEffect(() => {
     if (hashFlag("add")) { setAdding(true); clearHashFlags(); }
@@ -112,7 +114,11 @@ export function FoldersPage() {
                   <div className="folder-main">
                     <FolderIcon size={30} tone={s.status === "unreachable" ? "err" : s.watching ? "normal" : "off"} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="path">{s.display_path}{s.is_drive_root && <span className="badge" style={{ marginLeft: 8 }}>{t("folders.driveRoot")}</span>}</div>
+                      <div className="path">
+                        {s.display_path}
+                        {s.is_drive_root && <span className="badge" style={{ marginLeft: 8 }}>{t("folders.driveRoot")}</span>}
+                        {s.is_network && <span className="badge" style={{ marginLeft: 8 }}>{t("folders.networkBadge")}</span>}
+                      </div>
                       <div className="meta">{metaLine(s)}</div>
                     </div>
                     <div className="folder-state">
@@ -149,7 +155,7 @@ export function FoldersPage() {
                       ) : (
                         <button type="button" className="btn btn-sm" disabled={s.status === "unreachable"} onClick={() => act(api.startIndex(s.scope_id))}>{t("folders.scanNow")}</button>
                       )}
-                      <button type="button" className="btn btn-sm" onClick={() => toast(t("folders.exclusionsLater"))}>{t("folders.exclusions", { n: s.exclusion_count })}</button>
+                      <button type="button" className="btn btn-sm" onClick={() => setExcluding(s)}>{t("folders.exclusions", { n: s.exclusion_count })}</button>
                       <button type="button" className="btn btn-sm btn-danger" onClick={() => setRevoking(s)}>{t("folders.removePurge")}</button>
                     </div>
                   )}
@@ -161,10 +167,11 @@ export function FoldersPage() {
         <p className="page-foot">{t("folders.foot")}</p>
       </div>
       {adding && <AddFolderDialog onClose={() => setAdding(false)} />}
+      {excluding && <ExclusionsDialog scope={excluding} onClose={() => setExcluding(null)} />}
       {revoking && (
         <RevokeDialog
           scope={revoking}
-          parentPath={pathOf(revoking.parent_scope_id) ?? list.find((p) => p.scope_id !== revoking.scope_id && revoking.display_path.startsWith(p.display_path + "/"))?.display_path ?? null}
+          parentPath={pathOf(revoking.parent_scope_id) ?? list.find((p) => p.scope_id !== revoking.scope_id && isChildPath(revoking.display_path, p.display_path))?.display_path ?? null}
           onClose={() => { setRevoking(null); setExpanded(null); }}
         />
       )}

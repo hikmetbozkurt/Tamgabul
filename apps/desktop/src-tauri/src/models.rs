@@ -11,11 +11,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tamgabul_core::db;
-use tamgabul_core::dto::{ModelEntry, RegisterModelRequest, StepState, TtlPolicy, ValidationStep};
+use tamgabul_core::dto::{
+    DownloadModelRequest, DownloadPhase, DownloadProgress, DownloadableFile, DownloadableModel,
+    ModelEntry, RegisterModelRequest, StepState, TtlPolicy, ValidationStep,
+};
 use tamgabul_core::error::{ErrorCode, IpcError};
 use tamgabul_core::health::{derive_health, AppHealth, HealthInputs, ModelSummary};
+use tamgabul_core::index::walk;
 use tamgabul_core::model::{ModelCategory, ModelStatus};
 use tamgabul_core::registry::{self, ModelRecord};
+use tamgabul_runtime::download::{self, DownloadError};
 use tamgabul_runtime::worker::{Launcher, LlamaServerConfig, ProcessLauncher, Worker};
 use tamgabul_runtime::{eg2, llm, locate, smoke, ModelManager, Policy, RuntimeError};
 use tauri::ipc::Channel;
@@ -36,6 +41,33 @@ pub struct Validated {
 pub struct ModelsState {
     pub validation_cancel: Mutex<Option<Arc<AtomicBool>>>,
     pub validated: Mutex<Option<Validated>>,
+    pub download_cancel: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+fn replace_cancel_slot(
+    slot: &Mutex<Option<Arc<AtomicBool>>>,
+    next: Arc<AtomicBool>,
+) -> Result<(), IpcError> {
+    let mut guard = slot.lock().map_err(|_| lock_err())?;
+    if let Some(prev) = guard.replace(next) {
+        prev.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+pub(crate) fn cancel_slot(slot: &Mutex<Option<Arc<AtomicBool>>>) -> Result<(), IpcError> {
+    if let Some(c) = slot.lock().map_err(|_| lock_err())?.take() {
+        c.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+fn clear_cancel_slot_if_same(slot: &Mutex<Option<Arc<AtomicBool>>>, flag: &Arc<AtomicBool>) {
+    if let Ok(mut guard) = slot.lock() {
+        if guard.as_ref().is_some_and(|c| Arc::ptr_eq(c, flag)) {
+            *guard = None;
+        }
+    }
 }
 
 const VALIDATION_FRESH_FOR: Duration = Duration::from_secs(30 * 60);
@@ -639,36 +671,169 @@ pub async fn validate_model(
     on_step: Channel<Vec<ValidationStep>>,
 ) -> Result<bool, IpcError> {
     let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let state = app.state::<AppState>();
-        let mut slot = state
-            .model_ops
-            .validation_cancel
-            .lock()
-            .map_err(|_| lock_err())?;
-        // One validation at a time: a new one cancels the previous.
-        if let Some(prev) = slot.replace(cancel.clone()) {
-            prev.store(true, Ordering::SeqCst);
-        }
-    }
+    replace_cancel_slot(
+        &app.state::<AppState>().model_ops.validation_cancel,
+        cancel.clone(),
+    )?;
     let app2 = app.clone();
-    tauri::async_runtime::spawn_blocking(move || run_validation(&app2, req, on_step, cancel))
-        .await
-        .map_err(|_| IpcError::new(ErrorCode::Internal, "validation task failed"))?
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let out = run_validation(&app2, req, on_step, cancel.clone());
+        clear_cancel_slot_if_same(
+            &app2.state::<AppState>().model_ops.validation_cancel,
+            &cancel,
+        );
+        out
+    })
+    .await
+    .map_err(|_| IpcError::new(ErrorCode::Internal, "validation task failed"))?;
+    res
 }
 
 #[tauri::command]
 pub fn cancel_validation(state: State<'_, AppState>) -> Result<(), IpcError> {
-    if let Some(c) = state
-        .model_ops
-        .validation_cancel
-        .lock()
-        .map_err(|_| lock_err())?
-        .take()
-    {
-        c.store(true, Ordering::SeqCst);
+    cancel_slot(&state.model_ops.validation_cancel)
+}
+
+// ---------------------------------------------------------------- optional explicit download
+
+fn default_model_dir(app_data_dir: Option<&Path>, subdir: &str) -> String {
+    match app_data_dir {
+        Some(d) => walk::display(&d.join("models").join(subdir)),
+        None => format!("models/{subdir}"),
     }
-    Ok(())
+}
+
+fn catalog_entries(app_data_dir: Option<&Path>) -> Vec<DownloadableModel> {
+    download::catalog()
+        .iter()
+        .map(|p| DownloadableModel {
+            preset_id: p.preset_id.into(),
+            category: p.category,
+            display_name: p.display_name.into(),
+            recommended: p.recommended,
+            repo: p.repo.into(),
+            revision: p.commit.into(),
+            origin_host: download::ORIGIN_HOST.into(),
+            license_name: p.license_name.into(),
+            license_url: p.license_url.into(),
+            default_dir: default_model_dir(app_data_dir, p.default_subdir),
+            total_bytes: p.total_bytes(),
+            files: p
+                .files
+                .iter()
+                .map(|f| DownloadableFile {
+                    filename: f.name.into(),
+                    size_bytes: f.size_bytes,
+                    sha256: f.sha256.into(),
+                })
+                .collect(),
+            capabilities: p.capabilities.iter().map(|s| (*s).to_string()).collect(),
+        })
+        .collect()
+}
+
+fn validate_download_request(
+    req: &DownloadModelRequest,
+) -> Result<(&'static download::ModelPreset, PathBuf), IpcError> {
+    if !req.consent {
+        return Err(IpcError::new(
+            ErrorCode::UserCancelled,
+            "explicit consent required",
+        ));
+    }
+    let preset = download::find_preset(&req.preset_id)
+        .ok_or_else(|| IpcError::new(ErrorCode::ModelIncompatible, "unknown model preset"))?;
+    let dest = req.destination_dir.trim();
+    if dest.is_empty() {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "choose a local folder",
+        ));
+    }
+    let p = Path::new(dest);
+    if walk::is_device_path(p) || walk::is_network_path(p) {
+        return Err(IpcError::new(
+            ErrorCode::ScopeNotAuthorized,
+            "choose a local folder",
+        ));
+    }
+    Ok((preset, p.to_path_buf()))
+}
+
+#[tauri::command]
+pub fn list_downloadable_models(
+    state: State<'_, AppState>,
+) -> Result<Vec<DownloadableModel>, IpcError> {
+    Ok(catalog_entries(state.app_data_dir.as_deref()))
+}
+
+#[tauri::command]
+pub async fn download_model(
+    app: AppHandle,
+    req: DownloadModelRequest,
+    on_progress: Channel<DownloadProgress>,
+) -> Result<String, IpcError> {
+    let (preset, dest_dir) = validate_download_request(&req)?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    replace_cancel_slot(
+        &app.state::<AppState>().model_ops.download_cancel,
+        cancel.clone(),
+    )?;
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut last_file = String::new();
+        let mut last_idx = 0u32;
+        let mut last_done = 0u64;
+        let file_count = preset.files.len() as u32;
+        let total_bytes = preset.total_bytes();
+        let res = download::download_preset(preset, &dest_dir, &cancel, &mut |p| {
+            last_file = p.file_name.clone();
+            last_idx = p.file_index;
+            last_done = p.bytes_done;
+            let _ = on_progress.send(DownloadProgress {
+                preset_id: preset.preset_id.into(),
+                phase: p.phase.clone(),
+                file_index: p.file_index,
+                file_count: p.file_count,
+                file_name: p.file_name,
+                bytes_done: p.bytes_done,
+                bytes_total: p.bytes_total,
+                destination_path: (p.phase == DownloadPhase::Done)
+                    .then(|| walk::display(&dest_dir)),
+                error_key: None,
+            });
+        });
+        clear_cancel_slot_if_same(&app2.state::<AppState>().model_ops.download_cancel, &cancel);
+        match res {
+            Ok(dir) => Ok(walk::display(&dir)),
+            Err(e) => {
+                let phase = if e == DownloadError::Cancelled {
+                    DownloadPhase::Cancelled
+                } else {
+                    DownloadPhase::Failed
+                };
+                let _ = on_progress.send(DownloadProgress {
+                    preset_id: preset.preset_id.into(),
+                    phase,
+                    file_index: last_idx,
+                    file_count,
+                    file_name: last_file,
+                    bytes_done: last_done,
+                    bytes_total: total_bytes,
+                    destination_path: None,
+                    error_key: Some(e.error_key().into()),
+                });
+                Err(IpcError::new(e.error_code(), e.error_key()))
+            }
+        }
+    })
+    .await
+    .map_err(|_| IpcError::new(ErrorCode::Internal, "download task failed"))?
+}
+
+#[tauri::command]
+pub fn cancel_model_download(state: State<'_, AppState>) -> Result<(), IpcError> {
+    cancel_slot(&state.model_ops.download_cancel)
 }
 
 // ---------------------------------------------------------------- register / lifecycle
@@ -830,5 +995,41 @@ mod tests {
         ));
         assert_eq!(e.code, ErrorCode::RuntimeLoadFailed);
         assert!(!e.detail.contains("Users"));
+    }
+
+    #[test]
+    fn download_catalog_and_consent_gate_work_offline() {
+        let entries = catalog_entries(Some(Path::new("/app-data")));
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().any(|e| e.preset_id == "eg2-bf16"));
+        assert!(entries.iter().any(|e| e.preset_id == "gemma4-e2b-q4_0"));
+        assert!(entries
+            .iter()
+            .all(|e| e.license_name == "Apache-2.0" && e.origin_host == "huggingface.co"));
+
+        let err = validate_download_request(&DownloadModelRequest {
+            preset_id: "eg2-bf16".into(),
+            destination_dir: "/tmp/m".into(),
+            consent: false,
+        })
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::UserCancelled);
+
+        let err_net = validate_download_request(&DownloadModelRequest {
+            preset_id: "eg2-bf16".into(),
+            destination_dir: r"\\nas\models".into(),
+            consent: true,
+        })
+        .unwrap_err();
+        assert_eq!(err_net.code, ErrorCode::ScopeNotAuthorized);
+
+        let (preset, dest) = validate_download_request(&DownloadModelRequest {
+            preset_id: "eg2-q8_0".into(),
+            destination_dir: "models/eg2".into(),
+            consent: true,
+        })
+        .unwrap();
+        assert_eq!(preset.preset_id, "eg2-q8_0");
+        assert_eq!(dest, PathBuf::from("models/eg2"));
     }
 }

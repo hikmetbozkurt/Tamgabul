@@ -17,28 +17,48 @@ pub const ARCH: &str = "gemma-embedding2";
 pub const NATIVE_DIM: usize = 768;
 pub const MATRYOSHKA_DIMS: [usize; 4] = [768, 512, 256, 128];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinnedFile {
+    pub name: &'static str,
+    pub size_bytes: u64,
+    pub sha256: &'static str,
+}
+
 /// Files published at `ggml-org/embeddinggemma-2-GGUF`, revision
-/// `6ea3e3a309d12a4779cfda98b8c19800d2d5da71` (LFS sha256 from the Hub).
-/// A different hash is allowed (own conversion) but reported as unpinned.
+/// `6ea3e3a309d12a4779cfda98b8c19800d2d5da71` (LFS sha256 & byte sizes from
+/// the Hugging Face API). A different hash is allowed (own conversion) but
+/// reported as unpinned.
+pub const PINNED_REPO: &str = "ggml-org/embeddinggemma-2-GGUF";
+pub const PINNED_COMMIT: &str = "6ea3e3a309d12a4779cfda98b8c19800d2d5da71";
 pub const PINNED_REVISION: &str =
     "ggml-org/embeddinggemma-2-GGUF@6ea3e3a309d12a4779cfda98b8c19800d2d5da71";
+
+pub const BF16_MODEL: PinnedFile = PinnedFile {
+    name: "embeddinggemma-2-BF16.gguf",
+    size_bytes: 557_950_176,
+    sha256: "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216",
+};
+pub const Q8_MODEL: PinnedFile = PinnedFile {
+    name: "embeddinggemma-2-Q8_0.gguf",
+    size_bytes: 309_855_456,
+    sha256: "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
+};
+pub const BF16_MMPROJ: PinnedFile = PinnedFile {
+    name: "mmproj-embeddinggemma-2-BF16.gguf",
+    size_bytes: 982_074_816,
+    sha256: "cc8d7eb30a9984c5128d6b1ccdec7510bfce213dc92a840be0d20e2a62b26bcd",
+};
+pub const Q8_MMPROJ: PinnedFile = PinnedFile {
+    name: "mmproj-embeddinggemma-2-Q8_0.gguf",
+    size_bytes: 554_821_056,
+    sha256: "0531309472a6bc6f4b146c3736eee7795ec9db1903c25490d3c937490cef6dd8",
+};
+
 pub const PINNED_SHA256: &[(&str, &str)] = &[
-    (
-        "embeddinggemma-2-BF16.gguf",
-        "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216",
-    ),
-    (
-        "embeddinggemma-2-Q8_0.gguf",
-        "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
-    ),
-    (
-        "mmproj-embeddinggemma-2-BF16.gguf",
-        "cc8d7eb30a9984c5128d6b1ccdec7510bfce213dc92a840be0d20e2a62b26bcd",
-    ),
-    (
-        "mmproj-embeddinggemma-2-Q8_0.gguf",
-        "0531309472a6bc6f4b146c3736eee7795ec9db1903c25490d3c937490cef6dd8",
-    ),
+    (BF16_MODEL.name, BF16_MODEL.sha256),
+    (Q8_MODEL.name, Q8_MODEL.sha256),
+    (BF16_MMPROJ.name, BF16_MMPROJ.sha256),
+    (Q8_MMPROJ.name, Q8_MMPROJ.sha256),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -27,8 +27,8 @@ const TICK: Duration = Duration::from_secs(2);
 #[derive(Default)]
 pub struct WatchState {
     watcher: Mutex<Option<RecommendedWatcher>>,
-    /// scope_id → watched root.
-    roots: Mutex<HashMap<String, PathBuf>>,
+    /// scope_id → (watched root, canonical exclusions).
+    roots: Mutex<HashMap<String, (PathBuf, Vec<PathBuf>)>>,
     /// scope_id → time of the last change seen.
     dirty: Mutex<HashMap<String, Instant>>,
     /// Paths whose changes are ignored (app data: the index itself).
@@ -51,8 +51,8 @@ fn on_event(app: &AppHandle, ev: notify::Result<notify::Event>) {
         if ignore.iter().any(|i| is_within(p, i)) {
             continue;
         }
-        for (id, root) in roots.iter() {
-            if is_within(p, root) {
+        for (id, (root, exclusions)) in roots.iter() {
+            if is_within(p, root) && !exclusions.iter().any(|e| is_within(p, e)) {
                 dirty.insert(id.clone(), Instant::now());
             }
         }
@@ -60,7 +60,7 @@ fn on_event(app: &AppHandle, ev: notify::Result<notify::Event>) {
 }
 
 /// Watch exactly the folders that have watching on (call after any
-/// change to folders or their watching flag).
+/// change to folders, their watching flag, or their exclusions).
 pub fn sync(app: &AppHandle) {
     let state = app.state::<AppState>();
     let Some(path) = state.db_path.clone() else {
@@ -69,11 +69,14 @@ pub fn sync(app: &AppHandle) {
     let Ok(conn) = db::open_worker(&path) else {
         return;
     };
-    let want: HashMap<String, PathBuf> = store::watched_scopes(&conn)
+    let want: HashMap<String, (PathBuf, Vec<PathBuf>)> = store::watched_scopes(&conn)
         .unwrap_or_default()
         .into_iter()
         .filter(|s| s.canonical_path.is_dir())
-        .map(|s| (s.scope_id, s.canonical_path))
+        .map(|s| {
+            let ex = store::exclusions_for(&conn, &s.scope_id).unwrap_or_default();
+            (s.scope_id, (s.canonical_path, ex))
+        })
         .collect();
     let w = &state.watch;
     if let Ok(mut ig) = w.ignore.lock() {
@@ -98,8 +101,8 @@ pub fn sync(app: &AppHandle) {
     let Ok(mut roots) = w.roots.lock() else {
         return;
     };
-    for (id, root) in roots.clone() {
-        if want.get(&id) != Some(&root) {
+    for (id, (root, _)) in roots.clone() {
+        if want.get(&id).map(|(r, _)| r) != Some(&root) {
             let _ = watcher.unwatch(&root);
             roots.remove(&id);
             if let Ok(mut d) = w.dirty.lock() {
@@ -107,12 +110,13 @@ pub fn sync(app: &AppHandle) {
             }
         }
     }
-    for (id, root) in want {
-        if roots.contains_key(&id) {
+    for (id, (root, ex)) in want {
+        if let Some((_, existing_ex)) = roots.get_mut(&id) {
+            *existing_ex = ex;
             continue;
         }
         if watcher.watch(&root, RecursiveMode::Recursive).is_ok() {
-            roots.insert(id, root);
+            roots.insert(id, (root, ex));
         }
     }
 }
@@ -126,6 +130,9 @@ pub fn start(app: &AppHandle) {
         .spawn(move || loop {
             std::thread::sleep(TICK);
             let state = app.state::<AppState>();
+            if crate::scopes::is_indexing_paused(&state) {
+                continue;
+            }
             let due: Vec<String> = match state.watch.dirty.lock() {
                 Ok(d) => d
                     .iter()

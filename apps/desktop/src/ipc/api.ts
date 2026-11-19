@@ -1,6 +1,9 @@
 // The contract the UI talks to, implemented by the Rust core (core.ts).
 // Parts whose backend phase has not landed answer NOT_IMPLEMENTED.
 import type { AppHealth } from "../bindings/AppHealth";
+import type { DownloadModelRequest } from "../bindings/DownloadModelRequest";
+import type { DownloadProgress } from "../bindings/DownloadProgress";
+import type { DownloadableModel } from "../bindings/DownloadableModel";
 import type { HistorySession } from "../bindings/HistorySession";
 import type { HistoryTurn } from "../bindings/HistoryTurn";
 import type { IndexStats } from "../bindings/IndexStats";
@@ -9,6 +12,7 @@ import type { RegisterModelRequest } from "../bindings/RegisterModelRequest";
 import type { ResourceUsage } from "../bindings/ResourceUsage";
 import type { ResultPreview } from "../bindings/ResultPreview";
 import type { RevokeRequest } from "../bindings/RevokeRequest";
+import type { ScopeExclusion } from "../bindings/ScopeExclusion";
 import type { ScopePreview } from "../bindings/ScopePreview";
 import type { ScopeSummary } from "../bindings/ScopeSummary";
 import type { SearchRequest } from "../bindings/SearchRequest";
@@ -31,6 +35,8 @@ export interface Api {
   /** Streams validation steps; resolves true when every step passed. */
   validateModel(req: RegisterModelRequest, onStep: (s: ValidationStep[]) => void, signal: AbortSignal): Promise<boolean>;
   registerModel(req: RegisterModelRequest): Promise<ModelEntry>;
+  listDownloadableModels(): Promise<DownloadableModel[]>;
+  downloadModel(req: DownloadModelRequest, onProgress: (p: DownloadProgress) => void, signal: AbortSignal): Promise<string>;
 
   listScopes(): Promise<ScopeSummary[]>;
   indexStats(): Promise<IndexStats>;
@@ -42,6 +48,9 @@ export interface Api {
   revokeScope(req: RevokeRequest): Promise<void>;
   /** Point a moved folder at `path` (chosen by the user), keeping its index. */
   relinkScope(id: string, path: string): Promise<void>;
+  listScopeExclusions(scopeId: string): Promise<ScopeExclusion[]>;
+  addScopeExclusion(scopeId: string, path: string): Promise<ScopeExclusion>;
+  removeScopeExclusion(scopeId: string, exclusionId: string): Promise<void>;
 
   search(req: SearchRequest): Promise<SearchResponse>;
   preview(resultRef: string): Promise<ResultPreview>;

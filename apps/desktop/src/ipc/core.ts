@@ -5,6 +5,9 @@ import { Channel } from "@tauri-apps/api/core";
 import type { Api } from "./api";
 import { call, isTauri, on } from "./bridge";
 import type { AppHealth } from "../bindings/AppHealth";
+import type { DownloadModelRequest } from "../bindings/DownloadModelRequest";
+import type { DownloadProgress } from "../bindings/DownloadProgress";
+import type { DownloadableModel } from "../bindings/DownloadableModel";
 import type { IpcError } from "../bindings/IpcError";
 import type { ModelEntry } from "../bindings/ModelEntry";
 import type { HistorySession } from "../bindings/HistorySession";
@@ -14,6 +17,7 @@ import type { RegisterModelRequest } from "../bindings/RegisterModelRequest";
 import type { ResourceUsage } from "../bindings/ResourceUsage";
 import type { ResultPreview } from "../bindings/ResultPreview";
 import type { RevokeRequest } from "../bindings/RevokeRequest";
+import type { ScopeExclusion } from "../bindings/ScopeExclusion";
 import type { ScopePreview } from "../bindings/ScopePreview";
 import type { ScopeSummary } from "../bindings/ScopeSummary";
 import type { SearchRequest } from "../bindings/SearchRequest";
@@ -106,6 +110,24 @@ export class CoreApi implements Api {
     return m;
   }
 
+  async listDownloadableModels(): Promise<DownloadableModel[]> {
+    if (!isTauri()) return [];
+    return call<DownloadableModel[]>("list_downloadable_models");
+  }
+
+  async downloadModel(req: DownloadModelRequest, onProgress: (p: DownloadProgress) => void, signal: AbortSignal): Promise<string> {
+    if (!isTauri()) throw noCore("download_model");
+    const ch = new Channel<DownloadProgress>();
+    ch.onmessage = (p) => { if (!signal.aborted) onProgress(p); };
+    const abort = () => { call("cancel_model_download").catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      return await call<string>("download_model", { req, onProgress: ch });
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
   private changed() { this.listeners.forEach((l) => l()); }
 
   async listScopes(): Promise<ScopeSummary[]> {
@@ -155,6 +177,24 @@ export class CoreApi implements Api {
   async relinkScope(scopeId: string, path: string) {
     if (!isTauri()) throw noCore("relink_scope");
     await call("relink_scope", { scopeId, path });
+  }
+
+  async listScopeExclusions(scopeId: string): Promise<ScopeExclusion[]> {
+    if (!isTauri()) return [];
+    return call<ScopeExclusion[]>("list_scope_exclusions", { scopeId });
+  }
+
+  async addScopeExclusion(scopeId: string, path: string): Promise<ScopeExclusion> {
+    if (!isTauri()) throw noCore("add_scope_exclusion");
+    const ex = await call<ScopeExclusion>("add_scope_exclusion", { scopeId, path });
+    this.changed();
+    return ex;
+  }
+
+  async removeScopeExclusion(scopeId: string, exclusionId: string) {
+    if (!isTauri()) throw noCore("remove_scope_exclusion");
+    await call("remove_scope_exclusion", { scopeId, exclusionId });
+    this.changed();
   }
 
   async search(req: SearchRequest): Promise<SearchResponse> {
