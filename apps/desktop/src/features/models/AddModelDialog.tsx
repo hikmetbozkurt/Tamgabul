@@ -14,12 +14,15 @@ import { formatBytes } from "../../lib/format";
 import { CATEGORIES } from "../../lib/health";
 import { isMacOs, pathPlaceholder } from "../../lib/platform";
 
-// Only STT models are folders; the others are single files.
-const PICK_DIRECTORY: Record<ModelCategory, boolean> = { embedding: false, llm: false, stt: true, tts: false };
+// Whisper (.bin), Gemma GGUF (.gguf), and Piper (.onnx) can be picked as files;
+// folder paths can also be entered for multi-file validation.
+const PICK_DIRECTORY: Record<ModelCategory, boolean> = { embedding: false, llm: false, stt: false, tts: false };
 
 function stepDetailKey(detail: string, os: string): string {
   if (!isMacOs(os)) return detail;
   if (detail === "addModel.fail.runtime") return "addModel.fail.runtimeMac";
+  if (detail === "addModel.fail.runtime.stt") return "addModel.fail.runtimeMac.stt";
+  if (detail === "addModel.fail.runtime.tts") return "addModel.fail.runtimeMac.tts";
   if (detail === "addModel.fail.smoke") return "addModel.fail.smokeMac";
   return detail;
 }

@@ -17,13 +17,14 @@ use tamgabul_core::dto::{
     IndexStats, RevokeRequest, ScopeExclusion, ScopePreview, ScopeStatus, ScopeSummary,
 };
 use tamgabul_core::error::{ErrorCode, IpcError};
-use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Progress};
+use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Progress, Transcriber};
 use tamgabul_core::index::media::Platform;
 use tamgabul_core::index::store::{self, GenerationSpec, Scope, ScopeState};
 use tamgabul_core::index::walk::{self, Limits};
 use tamgabul_core::model::{ModelCategory, ModelStatus};
 use tamgabul_core::registry::{self, ModelRecord};
 use tamgabul_runtime::client::{ChatMessage, Client};
+use tamgabul_runtime::stt::WhisperClient;
 use tamgabul_runtime::{eg2, Lease};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -833,6 +834,61 @@ impl Describer for LlmDescriber {
     }
 }
 
+/// Optional spoken audio transcription with the registered local STT model (P6).
+struct SttTranscriber {
+    app: AppHandle,
+    model: Option<registry::ModelRecord>,
+    lease: Option<Lease>,
+    client: Option<WhisperClient>,
+}
+
+impl SttTranscriber {
+    fn new(app: &AppHandle, conn: &rusqlite::Connection) -> Self {
+        let model = registry::active(conn)
+            .ok()
+            .and_then(|v| v.into_iter().find(|m| m.category == ModelCategory::Stt))
+            .filter(|m| m.status.from_persisted_snapshot() == ModelStatus::Available);
+        Self {
+            app: app.clone(),
+            model,
+            lease: None,
+            client: None,
+        }
+    }
+}
+
+impl Transcriber for SttTranscriber {
+    fn available(&mut self) -> bool {
+        self.model.is_some()
+    }
+
+    fn transcribe_wav(&mut self, wav: &[u8]) -> Result<Option<String>, IpcError> {
+        let Some(m) = &self.model else {
+            return Ok(None);
+        };
+        if self.client.is_none() {
+            let state = self.app.state::<AppState>();
+            if state.models.snapshot(&m.model_id).is_none() {
+                crate::models::attach(&state.models, m);
+            }
+            let lease = state
+                .models
+                .acquire(&m.model_id)
+                .map_err(crate::models::ipc)?;
+            self.client = Some(WhisperClient::new(
+                lease.endpoint().clone(),
+                Duration::from_secs(60),
+            ));
+            self.lease = Some(lease);
+        }
+        let c = self.client.as_ref().expect("client set above");
+        let text = c
+            .transcribe_wav(wav, Some("auto"))
+            .map_err(crate::models::ipc)?;
+        Ok((!text.trim().is_empty()).then_some(text))
+    }
+}
+
 fn set_error(app: &AppHandle, scope_id: &str, code: ErrorCode) {
     let state = app.state::<AppState>();
     let code = serde_json::to_value(code)
@@ -870,8 +926,9 @@ fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome,
         props: None,
     };
     let mut describer = LlmDescriber::new(app, &conn);
+    let mut transcriber = SttTranscriber::new(app, &conn);
     let mut last = Instant::now();
-    let (outcome, _) = job::run(
+    let (outcome, _) = job::run_with_transcriber(
         &mut conn,
         JobInput {
             scope_id,
@@ -886,6 +943,7 @@ fn scan(app: &AppHandle, scope_id: &str, cancel: &AtomicBool) -> Result<Outcome,
         },
         &mut embedder,
         &mut describer,
+        &mut transcriber,
         cancel,
         &mut |p| {
             if let Ok(mut m) = state.scopes.progress.lock() {

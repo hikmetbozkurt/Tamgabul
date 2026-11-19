@@ -17,6 +17,10 @@ import type { ScopePreview } from "../bindings/ScopePreview";
 import type { ScopeSummary } from "../bindings/ScopeSummary";
 import type { SearchRequest } from "../bindings/SearchRequest";
 import type { SearchResponse } from "../bindings/SearchResponse";
+import type { SynthesizeRequest } from "../bindings/SynthesizeRequest";
+import type { SynthesizeResponse } from "../bindings/SynthesizeResponse";
+import type { TranscribeRequest } from "../bindings/TranscribeRequest";
+import type { TranscribeResponse } from "../bindings/TranscribeResponse";
 import type { TtlPolicy } from "../bindings/TtlPolicy";
 import type { ValidationStep } from "../bindings/ValidationStep";
 
@@ -66,6 +70,10 @@ export interface Api {
   /** Writes the redacted diagnostics JSON to `path`. */
   exportDiagnostics(path: string): Promise<void>;
   openDataFolder(): Promise<void>;
+
+  transcribeAudio(req: TranscribeRequest): Promise<TranscribeResponse>;
+  synthesizeSpeech(req: SynthesizeRequest): Promise<SynthesizeResponse>;
+  stopSpeech(): Promise<void>;
 }
 
 // The conversation shown in Search, shared by both windows (widget → app).

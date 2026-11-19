@@ -8,6 +8,7 @@ mod scopes;
 mod search_cmd;
 mod system;
 mod tray;
+mod voice;
 mod watch;
 mod windows;
 
@@ -36,6 +37,7 @@ pub struct AppState {
     pub app_data_dir: Option<std::path::PathBuf>,
     pub scopes: scopes::ScopesState,
     pub watch: watch::WatchState,
+    pub voice: voice::VoiceState,
 }
 
 /// `model_status` event payload. No paths, no model input.
@@ -67,6 +69,7 @@ fn model_listener(app: AppHandle) -> Listener {
 /// the processes are gone.
 pub fn stop_models(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
+        voice::cancel_active(&state);
         let _ = models::cancel_slot(&state.model_ops.validation_cancel);
         let _ = models::cancel_slot(&state.model_ops.download_cancel);
         state.models.shutdown();
@@ -107,6 +110,13 @@ fn main() {
         )
         .setup(|app| {
             let data_dir = app.path().app_data_dir().ok();
+            if let Some(dir) = &data_dir {
+                let reaped = tamgabul_runtime::process::cleanup_stale_workers(dir);
+                if reaped > 0 {
+                    eprintln!("reaped {reaped} stale worker process(es) from earlier exit");
+                }
+                tamgabul_runtime::process::set_worker_registry_dir(dir.clone());
+            }
             let conn = open_db(data_dir.as_deref());
             let db_path = conn
                 .as_ref()
@@ -128,6 +138,7 @@ fn main() {
                 app_data_dir: data_dir,
                 scopes: scopes::ScopesState::default(),
                 watch: watch::WatchState::default(),
+                voice: voice::VoiceState::default(),
             });
             // Make registered models known to the manager. Nothing is loaded.
             models::init(&app.state::<AppState>());
@@ -189,6 +200,9 @@ fn main() {
             system::resource_usage,
             system::export_diagnostics,
             system::open_data_folder,
+            voice::transcribe_audio,
+            voice::synthesize_speech,
+            voice::stop_speech,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Tamgabul")

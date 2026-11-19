@@ -10,7 +10,12 @@ export type LicenseItem = { name: string; license: string; url: string; kind: "m
 export const LICENSES: LicenseItem[] = [
   { name: "EmbeddingGemma 2 (GGUF, ggml-org)", license: "Apache-2.0", url: "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF", kind: "model" },
   { name: "Gemma 4 E2B-it (GGUF, ggml-org)", license: "Apache-2.0", url: "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF", kind: "model" },
+  { name: "Whisper GGML weights (ggerganov/whisper.cpp)", license: "MIT", url: "https://huggingface.co/ggerganov/whisper.cpp", kind: "model" },
+  { name: "Piper Voice tr_TR-dfki-medium (dataset)", license: "CC-BY-NC-SA-4.0 (non-commercial dataset)", url: "https://huggingface.co/rhasspy/piper-voices/blob/main/tr/tr_TR/dfki/medium/MODEL_CARD", kind: "model" },
+  { name: "Piper Voice en_US-ljspeech-medium", license: "Public Domain (LJ Speech) / MIT", url: "https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/ljspeech/medium/MODEL_CARD", kind: "model" },
   { name: "llama.cpp (llama-server)", license: "MIT", url: "https://github.com/ggml-org/llama.cpp", kind: "runtime" },
+  { name: "whisper.cpp (whisper-server)", license: "MIT", url: "https://github.com/ggml-org/whisper.cpp", kind: "runtime" },
+  { name: "Piper TTS CLI (external child process; rhasspy/piper MIT or piper1-gpl GPL-3.0)", license: "MIT / GPL-3.0 (user-installed CLI)", url: "https://github.com/OHF-Voice/piper1-gpl", kind: "runtime" },
   { name: "SQLite (bundled via rusqlite)", license: "Public domain", url: "https://www.sqlite.org/copyright.html", kind: "library" },
   { name: "Tauri + plugins (dialog, autostart, global-shortcut)", license: "Apache-2.0 OR MIT", url: "https://tauri.app/", kind: "library" },
   { name: "React, React DOM", license: "MIT", url: "https://react.dev/", kind: "library" },

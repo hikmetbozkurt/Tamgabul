@@ -78,7 +78,6 @@ fn handle(mut s: TcpStream, token: &str, ready_at: Instant, requests: &AtomicU32
     }
     let mut body = vec![0u8; len];
     let _ = r.read_exact(&mut body);
-    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
 
     if path == "/health" {
         if Instant::now() < ready_at {
@@ -90,6 +89,21 @@ fn handle(mut s: TcpStream, token: &str, ready_at: Instant, requests: &AtomicU32
         }
         return respond(&mut s, 200, &json!({"status":"ok"}));
     }
+    if method == "POST" && path == "/inference" {
+        requests.fetch_add(1, Ordering::SeqCst);
+        let text = String::from_utf8_lossy(&body);
+        let lang = if text.contains("name=\"language\"\r\n\r\ntr") {
+            "tr"
+        } else {
+            "auto"
+        };
+        return respond(
+            &mut s,
+            200,
+            &json!({ "text": format!("fake transcript ({lang}, {} bytes)", body.len()) }),
+        );
+    }
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     if auth != format!("Bearer {token}") {
         return respond(&mut s, 401, &json!({"error":"invalid api key"}));
     }

@@ -5,6 +5,7 @@ import { useResource } from "../../state/data";
 import { useSettings } from "../../state/settings";
 import { useToast } from "../../state/toast";
 import { relativeTime } from "../../lib/format";
+import { isUsable } from "../../lib/health";
 import { StatusPanel } from "../../shell/StatusPanel";
 import { navigate } from "../../shell/router";
 import { SearchBar } from "./SearchBar";
@@ -13,6 +14,7 @@ import { PreviewDrawer } from "./PreviewDrawer";
 import { useSearch } from "./useSearch";
 import { useResultActions } from "./useResultActions";
 import { VoiceOverlay } from "../voice/VoiceOverlay";
+import { useSpeech } from "../voice/useSpeech";
 
 const SUGGESTIONS = ["search.suggest1", "search.suggest2", "search.suggest3"];
 
@@ -20,6 +22,7 @@ export function SearchPage() {
   const { t, lang } = useI18n();
   const toast = useToast();
   const s = useSearch();
+  const speech = useSpeech();
   const { settings } = useSettings();
   const actions = useResultActions();
   const health = useResource((a) => a.health());
@@ -28,7 +31,10 @@ export function SearchPage() {
   const [voice, setVoice] = useState(false);
 
   const enabled = !!health.data?.semantic_search_enabled;
-  const mic = health.data?.models.find((m) => m.category === "stt")?.tone === "green";
+  const sttStatus = health.data?.models.find((m) => m.category === "stt")?.status;
+  const ttsStatus = health.data?.models.find((m) => m.category === "tts")?.status;
+  const mic = !!sttStatus && isUsable(sttStatus);
+  const ttsAvailable = !!ttsStatus && isUsable(ttsStatus);
   const inConvo = !!s.sessionId && (s.turns.length > 0 || s.pending !== null);
 
   const onSuggest = (kind: "filenames" | "ocr" | "folder") => {
@@ -44,8 +50,8 @@ export function SearchPage() {
       disabledText={t("search.disabled")}
       micAvailable={mic}
       autoFocus
-      onSubmit={(q) => s.submit(q)}
-      onMic={() => setVoice(true)}
+      onSubmit={(q) => { speech.stop(); s.submit(q); }}
+      onMic={() => { speech.stop(); setVoice(true); }}
     />
   );
 
@@ -59,7 +65,7 @@ export function SearchPage() {
                 {s.degraded ? (
                   <span className="banner"><span className="dot dot-warn" />{t("search.degraded")}</span>
                 ) : <span />}
-                <button type="button" className="btn btn-sm btn-ghost" onClick={s.reset}>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => { speech.stop(); s.reset(); }}>
                   <Icon name="plus" size={16} stroke={1.8} />{t("search.new")}
                 </button>
               </div>
@@ -67,6 +73,8 @@ export function SearchPage() {
                 turns={s.turns}
                 pending={s.pending}
                 error={s.error}
+                ttsAvailable={ttsAvailable}
+                speech={speech}
                 onChoice={(id, label) => s.submit(label, id)}
                 onOpen={actions.onOpen}
                 onReveal={actions.onReveal}

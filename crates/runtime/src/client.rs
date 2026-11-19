@@ -59,14 +59,47 @@ pub struct Client {
     agent: ureq::Agent,
 }
 
+pub(crate) fn loopback_agent(request_timeout: Duration) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(2))
+        .timeout(request_timeout)
+        .try_proxy_from_env(false)
+        .build()
+}
+
+pub(crate) fn ensure_loopback(ep: &Endpoint) -> Result<(), RuntimeError> {
+    if ep.is_loopback() {
+        Ok(())
+    } else {
+        Err(RuntimeError::Request(
+            "non-loopback worker endpoint refused".into(),
+        ))
+    }
+}
+
+pub(crate) fn map_ureq_err(e: ureq::Error) -> RuntimeError {
+    match e {
+        ureq::Error::Status(code, r) => {
+            let body = r.into_string().unwrap_or_default();
+            RuntimeError::Request(format!("HTTP {code}: {}", truncate(&body, 300)))
+        }
+        ureq::Error::Transport(t) => {
+            let s = t.to_string();
+            if s.contains("timed out") || s.contains("Timeout") {
+                RuntimeError::Timeout
+            } else {
+                RuntimeError::Request(s)
+            }
+        }
+    }
+}
+
 impl Client {
     pub fn new(ep: Endpoint, request_timeout: Duration) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(2))
-            .timeout(request_timeout)
-            .try_proxy_from_env(false)
-            .build();
-        Self { ep, agent }
+        Self {
+            ep,
+            agent: loopback_agent(request_timeout),
+        }
     }
 
     pub fn endpoint(&self) -> &Endpoint {
@@ -74,13 +107,7 @@ impl Client {
     }
 
     fn check_loopback(&self) -> Result<(), RuntimeError> {
-        if self.ep.is_loopback() {
-            Ok(())
-        } else {
-            Err(RuntimeError::Request(
-                "non-loopback worker endpoint refused".into(),
-            ))
-        }
+        ensure_loopback(&self.ep)
     }
 
     fn url(&self, path: &str) -> String {
@@ -92,20 +119,7 @@ impl Client {
     }
 
     fn map_err(e: ureq::Error) -> RuntimeError {
-        match e {
-            ureq::Error::Status(code, r) => {
-                let body = r.into_string().unwrap_or_default();
-                RuntimeError::Request(format!("HTTP {code}: {}", truncate(&body, 300)))
-            }
-            ureq::Error::Transport(t) => {
-                let s = t.to_string();
-                if s.contains("timed out") || s.contains("Timeout") {
-                    RuntimeError::Timeout
-                } else {
-                    RuntimeError::Request(s)
-                }
-            }
-        }
+        map_ureq_err(e)
     }
 
     /// `Ok(true)` when the model is loaded, `Ok(false)` while loading (503).

@@ -10,7 +10,9 @@ use serde_json::json;
 use crate::client::{ChatMessage, Client};
 use crate::eg2::{self, Task};
 use crate::error::RuntimeError;
-use crate::worker::{LlamaServerConfig, ProcessLauncher, Worker};
+use crate::stt::{self, WhisperClient, WhisperServerConfig};
+use crate::tts::{self, PiperConfig, PiperLauncher, TtsClient};
+use crate::worker::{Launcher, LlamaServerConfig, ProcessLauncher, Worker};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmokeReport {
@@ -139,6 +141,51 @@ pub fn llm_smoke(
             answer,
             vision,
         })
+    })();
+    worker.terminate()?;
+    result
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SttSmokeReport {
+    pub cold_load: Duration,
+}
+
+/// STT smoke: start a private `whisper-server`, transcribe 400 ms of silence,
+/// check `/inference` returns valid JSON, and stop the worker.
+pub fn stt_smoke(
+    cfg: WhisperServerConfig,
+    cancel: &AtomicBool,
+) -> Result<SttSmokeReport, RuntimeError> {
+    let launcher = ProcessLauncher::whisper_server(cfg);
+    let t = Instant::now();
+    let worker = launcher.launch_process(cancel)?;
+    let cold_load = t.elapsed();
+    let result = (|| {
+        let client = WhisperClient::new(worker.endpoint().clone(), launcher.request_timeout());
+        let _ = client.transcribe_wav(&stt::silent_wav_16khz(400), Some("auto"))?;
+        Ok(SttSmokeReport { cold_load })
+    })();
+    worker.terminate()?;
+    result
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TtsSmokeReport {
+    pub sample_rate: u32,
+}
+
+/// TTS smoke: start a private Piper worker, synthesize a short test phrase,
+/// check valid RIFF/WAVE bytes return, and stop the worker.
+pub fn tts_smoke(cfg: PiperConfig, cancel: &AtomicBool) -> Result<TtsSmokeReport, RuntimeError> {
+    let launcher = PiperLauncher::new(cfg.clone());
+    let worker = launcher.launch(cancel)?;
+    let result = (|| {
+        let client = TtsClient::new(worker.endpoint().clone(), cfg.request_timeout);
+        let wav = client.synthesize("Tamgabul.")?;
+        let sample_rate = tts::parse_wav_sample_rate(&wav)
+            .ok_or_else(|| RuntimeError::BadResponse("invalid WAV from piper".into()))?;
+        Ok(TtsSmokeReport { sample_rate })
     })();
     worker.terminate()?;
     result

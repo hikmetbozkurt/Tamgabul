@@ -59,5 +59,6 @@ Model **installation/validation** is separate from **running state**:
 
 - **Search bar disabled / red status:** Check **Models**. EmbeddingGemma 2 must pass validation (`On disk` or loaded).
 - **`llama-server` not found:** Install `llama.cpp` or ensure `llama-server` is bundled next to the executable, on `PATH`, or set in `TAMGABUL_LLAMA_SERVER`.
-- **No text found in Turkish screenshots/scans (Windows):** Install the Turkish OCR feature in *Windows Settings → Time & language → Language*. (macOS OCR/Vision support is planned in a future phase.)
+- **No text found in Turkish screenshots/scans (Windows):** Install the Turkish OCR feature in *Windows Settings → Time & language → Language*. (On macOS, Vision OCR is built in; live verification pending.)
+- **Voice input / read aloud (optional STT & TTS):** Install `whisper-server` (for STT `.bin` Whisper GGML models, which also transcribe spoken words inside indexed audio files) and/or `piper` (for `.onnx` + `.onnx.json` Piper voices; note `tr_TR-dfki-medium` is CC-BY-NC-SA-4.0 non-commercial). Typing always works without them.
 - **Exporting bug reports safely:** Use **Settings → Privacy → Export diagnostics**. The exported JSON contains versions, counts, statuses, and error codes only—no file paths, file names, queries, or conversation text.

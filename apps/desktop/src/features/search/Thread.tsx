@@ -8,11 +8,14 @@ import { Icon } from "../../ui/icons";
 import { useI18n } from "../../i18n";
 import { clockTime, relativeTime } from "../../lib/format";
 import { ResultCard } from "./ResultCard";
+import type { SpeechController } from "../voice/useSpeech";
 
 type Props = {
   turns: HistoryTurn[];
   pending: string | null;
   error: IpcError | null;
+  ttsAvailable?: boolean;
+  speech?: SpeechController;
   onChoice: (id: string, label: string) => void;
   onOpen: (ref: string) => void;
   onReveal: (ref: string) => void;
@@ -181,6 +184,32 @@ function AssistantTurn({ turn, isLast, ...p }: { turn: HistoryTurn; isLast: bool
               <div className="direct-answer" data-testid="direct-answer">
                 <strong>{turn.answer.text}</strong>
                 <span className="small muted"> {t("search.answerFrom", { file: turn.results.find((r) => r.result_ref === turn.answer?.result_ref)?.title ?? "" })}</span>
+              </div>
+            )}
+            {p.ttsAvailable && p.speech && (turn.answer?.text || turn.summary?.text) && (
+              <div className="tts-bar">
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  disabled={p.speech.loadingId === turn.turn_id}
+                  onClick={() => {
+                    const spoken = [turn.answer?.text, turn.summary?.text]
+                      .filter(Boolean)
+                      .join(". ")
+                      .replace(/\[\d+(?:,\s*\d+)*\]/g, "");
+                    p.speech?.speak(turn.turn_id, spoken);
+                  }}
+                >
+                  <Icon
+                    name={p.speech.speakingId === turn.turn_id ? "stop" : "speakerWaves"}
+                    size={14}
+                  />
+                  {p.speech.loadingId === turn.turn_id
+                    ? t("voice.reading")
+                    : p.speech.speakingId === turn.turn_id
+                      ? t("voice.stopReading")
+                      : t("voice.readAloud")}
+                </button>
               </div>
             )}
             <UnderstoodLine u={turn.understood} />

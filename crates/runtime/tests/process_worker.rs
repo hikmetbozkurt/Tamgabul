@@ -12,6 +12,8 @@ use std::time::Duration;
 use tamgabul_core::model::ModelStatus;
 use tamgabul_runtime::client::{Client, Endpoint};
 use tamgabul_runtime::eg2;
+use tamgabul_runtime::stt::{self, WhisperClient};
+use tamgabul_runtime::tts::{self, PiperConfig, PiperLauncher, TtsClient};
 use tamgabul_runtime::worker::ProcessLauncher;
 use tamgabul_runtime::{ModelManager, Policy, RuntimeError, UnloadOutcome};
 
@@ -179,4 +181,88 @@ fn cancel_during_startup() {
         l.launch_process(&cancel).err(),
         Some(RuntimeError::Cancelled)
     );
+}
+
+#[test]
+fn stt_worker_process_serves_inference_and_unloads_cleanly() {
+    let m = ModelManager::with_poll(None, Duration::from_millis(50));
+    m.register("whisper", Arc::new(stand_in()), Policy::KeepLoaded);
+
+    let lease = m.acquire("whisper").unwrap();
+    let client = WhisperClient::new(lease.endpoint().clone(), Duration::from_secs(5));
+    let txt = client
+        .transcribe_wav(&stt::silent_wav_16khz(250), Some("tr"))
+        .unwrap();
+    assert!(txt.contains("fake transcript (tr"), "{txt}");
+
+    drop(lease);
+    assert_eq!(m.unload("whisper").unwrap(), UnloadOutcome::Unloaded);
+    assert_eq!(
+        m.snapshot("whisper").unwrap().status,
+        ModelStatus::Available
+    );
+}
+
+fn write_fake_piper_cli(dir: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let p = dir.join("fake-piper.cmd");
+        let ps = "$null=[Console]::In.ReadToEnd(); $s=[Console]::OpenStandardOutput(); $b=[byte[]](10,0,20,0,30,0,40,0); $s.Write($b,0,$b.Length); $s.Flush()";
+        std::fs::write(
+            &p,
+            format!("@echo off\r\npowershell -NoProfile -Command \"{ps}\"\r\n"),
+        )
+        .unwrap();
+        p
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join("fake-piper.sh");
+        std::fs::write(
+            &p,
+            "#!/bin/sh\nhead -c 1 >/dev/null 2>&1 || true\nprintf '\\012\\000\\024\\000\\036\\000\\050\\000'\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&p, perms).unwrap();
+        p
+    }
+}
+
+#[test]
+fn tts_piper_worker_synthesizes_wav_and_unloads_after_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = write_fake_piper_cli(dir.path());
+    let model = dir.path().join("tr_TR-dfki-medium.onnx");
+    let config = dir.path().join("tr_TR-dfki-medium.onnx.json");
+    std::fs::write(&model, [0u8; 32]).unwrap();
+    std::fs::write(&config, b"{}").unwrap();
+
+    let cfg = PiperConfig::new(exe, model, config, 22_050);
+    let m = ModelManager::with_poll(None, Duration::from_millis(50));
+    m.register(
+        "piper-tr",
+        Arc::new(PiperLauncher::new(cfg)),
+        Policy::UnloadAfterJob,
+    );
+
+    let lease = m.acquire("piper-tr").unwrap();
+    let client = TtsClient::new(lease.endpoint().clone(), Duration::from_secs(10));
+    let wav = client.synthesize("Merhaba Tamgabul").unwrap();
+    assert_eq!(tts::parse_wav_sample_rate(&wav), Some(22_050));
+    assert_eq!(wav.len(), 44 + 8);
+    client.cancel().unwrap();
+    drop(lease);
+
+    // UnloadAfterJob policy should return TTS worker back to Available promptly.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while m.snapshot("piper-tr").unwrap().status != ModelStatus::Available {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "TTS worker did not unload on UnloadAfterJob"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }

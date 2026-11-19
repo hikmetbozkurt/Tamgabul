@@ -59,5 +59,6 @@ Modelin **kurulu/doğrulanmış olması** ile **bellekte çalışıyor olması**
 
 - **Arama kutusu devre dışı / kırmızı durum:** **Modeller** sayfasını kontrol et. EmbeddingGemma 2 doğrulamadan geçip `Diskte` veya yüklü durumda olmalıdır.
 - **`llama-server` bulunamadı:** `llama.cpp` kur veya `llama-server` ikilisinin uygulama yanında, `PATH` içinde ya da `TAMGABUL_LLAMA_SERVER` ortam değişkeninde olduğundan emin ol.
-- **Türkçe ekran görüntülerinde/taramalarda yazı bulunamıyor (Windows):** *Windows Ayarları → Saat ve dil → Dil* bölümünden Türkçe OCR özelliğini kur. (macOS OCR/Vision desteği sonraki aşamada planlıdır.)
+- **Türkçe ekran görüntülerinde/taramalarda yazı bulunamıyor (Windows):** *Windows Ayarları → Saat ve dil → Dil* bölümünden Türkçe OCR özelliğini kur. (macOS'te Vision OCR yerleşiktir; gerçek donanım doğrulaması bekliyor.)
+- **Sesle arama / sesli okuma (isteğe bağlı STT ve TTS):** Whisper `.bin` GGML modelleri için `whisper-server` (indekslenen ses dosyalarındaki konuşmaları da yazıya çevirir) ve/veya `.onnx` + `.onnx.json` Piper sesleri için `piper` kur (`tr_TR-dfki-medium` veri kümesi CC-BY-NC-SA-4.0 ticari olmayan lisanstır). Bunlar olmadan da yazarak arama her zaman çalışır.
 - **Hata raporu için güvenli dışa aktarım:** **Ayarlar → Gizlilik → Tanılama dosyası kaydet** seçeneğini kullan. Çıktı yalnızca sürümleri, sayıları, durumları ve hata kodlarını içerir; dosya yolu, dosya adı, sorgu veya konuşma metni yer almaz.

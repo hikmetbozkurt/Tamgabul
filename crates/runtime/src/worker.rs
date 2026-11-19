@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use crate::client::{Client, Endpoint};
 use crate::error::RuntimeError;
 use crate::process::Supervised;
+use crate::stt::{whisper_server_args, WhisperServerConfig};
 
 /// A running, healthy worker.
 pub trait Worker: Send + Sync {
@@ -219,6 +220,19 @@ impl ProcessLauncher {
             Box::new(move |port, token| {
                 let mut c = Command::new(&cfg.exe);
                 c.args(llama_server_args(&cfg, port, token));
+                c
+            }),
+            st,
+            rt,
+        )
+    }
+
+    pub fn whisper_server(cfg: WhisperServerConfig) -> Self {
+        let (st, rt) = (cfg.startup_timeout, cfg.request_timeout);
+        Self::new(
+            Box::new(move |port, _token| {
+                let mut c = Command::new(&cfg.exe);
+                c.args(whisper_server_args(&cfg, port));
                 c
             }),
             st,

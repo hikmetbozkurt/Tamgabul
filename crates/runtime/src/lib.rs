@@ -24,6 +24,8 @@ pub mod locate;
 pub mod manager;
 pub mod process;
 pub mod smoke;
+pub mod stt;
+pub mod tts;
 pub mod worker;
 
 pub use error::RuntimeError;

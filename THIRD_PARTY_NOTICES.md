@@ -11,6 +11,8 @@ Tamgabul separates application code, optional bundled inference runtimes, user-s
 Model runner binaries are never committed to source control. When packaged installers bundle `llama-server`, the binary and its upstream license file are staged via `packaging/stage-runtime.ps1` (Windows) or `packaging/stage-runtime.sh` (macOS), which compute `SHA256SUMS.txt` and `runtime-manifest.json` directly from the staged files.
 
 - **llama.cpp (`llama-server`)** — MIT License — <https://github.com/ggml-org/llama.cpp>
+- **whisper.cpp (`whisper-server`, optional STT CLI/server)** — MIT License — <https://github.com/ggml-org/whisper.cpp>
+- **Piper TTS (`piper`, optional external CLI process, never linked)** — `rhasspy/piper` (archived `2023.11.14-2`) is MIT Licensed (<https://github.com/rhasspy/piper>); the active successor `OHF-Voice/piper1-gpl` is GPL-3.0 Licensed (<https://github.com/OHF-Voice/piper1-gpl>). GPL-3.0 `piper1-gpl` binaries must **not** be bundled inside Apache-2.0 release installers without explicit license review; Tamgabul discovers and invokes user-installed external `piper` processes via CLI only.
 
 ## 3. Model Weights (user-supplied, never bundled or auto-downloaded)
 
@@ -18,6 +20,10 @@ Tamgabul does not bundle or auto-download model weights. Users either register l
 
 - **EmbeddingGemma 2 (`ggml-org/embeddinggemma-2-GGUF`)** — marked Apache-2.0 on Hugging Face — <https://huggingface.co/ggml-org/embeddinggemma-2-GGUF>
 - **Gemma 4 E2B-it (`ggml-org/gemma-4-E2B-it-GGUF`)** — marked Apache-2.0 on Hugging Face — <https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF>
+- **Whisper GGML weights (`ggerganov/whisper.cpp`)** — MIT License — <https://huggingface.co/ggerganov/whisper.cpp>
+- **Piper Voices (`rhasspy/piper-voices`)** — repository card is MIT, while individual dataset licenses vary per voice `MODEL_CARD`:
+  - `tr_TR-dfki-medium` dataset license: **CC-BY-NC-SA-4.0** (non-commercial) — <https://huggingface.co/rhasspy/piper-voices/blob/main/tr/tr_TR/dfki/medium/MODEL_CARD>
+  - `en_US-ljspeech-medium` dataset license: **Public Domain (LJ Speech)** — <https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/ljspeech/medium/MODEL_CARD>
 
 ## 4. Direct Libraries, Frameworks, and Fonts
 

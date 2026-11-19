@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // P5 component and accessibility tests using a test-only FakeApi (never shipped, ADR 018).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { Root } from "./Root";
 import { comboFromEvent } from "./features/settings/SettingsPage";
@@ -26,8 +26,13 @@ import type { ScopeSummary } from "./bindings/ScopeSummary";
 import type { SearchRequest } from "./bindings/SearchRequest";
 import type { SearchResponse } from "./bindings/SearchResponse";
 import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
+import type { SynthesizeRequest } from "./bindings/SynthesizeRequest";
+import type { SynthesizeResponse } from "./bindings/SynthesizeResponse";
+import type { TranscribeRequest } from "./bindings/TranscribeRequest";
+import type { TranscribeResponse } from "./bindings/TranscribeResponse";
 import type { TtlPolicy } from "./bindings/TtlPolicy";
 import type { ValidationStep } from "./bindings/ValidationStep";
+import * as audioLib from "./lib/audio";
 import { deriveHealth } from "./lib/health";
 
 class FakeApi implements Api {
@@ -100,6 +105,16 @@ class FakeApi implements Api {
   registeredRequests: RegisterModelRequest[] = [];
   downloadRequests: DownloadModelRequest[] = [];
   loadedIds: string[] = [];
+  transcribedRequests: TranscribeRequest[] = [];
+  synthesizedRequests: SynthesizeRequest[] = [];
+  stopSpeechCalls = 0;
+  transcribeImpl: (req: TranscribeRequest) => Promise<TranscribeResponse> = async () => ({
+    text: "meeting budget notes",
+  });
+  synthesizeImpl: (req: SynthesizeRequest) => Promise<SynthesizeResponse> = async () => ({
+    wav_base64: audioLib.bytesToBase64(audioLib.encodeWav16kMono(new Int16Array(160), 22_050)),
+    sample_rate: 22_050,
+  });
   turnsBySession: Record<string, HistoryTurn[]> = {};
 
   notify() {
@@ -265,7 +280,13 @@ class FakeApi implements Api {
     this.notify();
     return r;
   }
-  async preview(_ref: string): Promise<ResultPreview> {
+  async preview(ref: string): Promise<ResultPreview> {
+    for (const turns of Object.values(this.turnsBySession)) {
+      for (const turn of turns) {
+        const hit = turn.results.find((r) => r.result_ref === ref);
+        if (hit) return { result: hit, body: hit.snippet ?? "" };
+      }
+    }
     throw { code: "NOT_IMPLEMENTED", detail: "unused" };
   }
   async openResult() {}
@@ -276,6 +297,17 @@ class FakeApi implements Api {
   async resourceUsage() { return this.usage; }
   async exportDiagnostics() {}
   async openDataFolder() {}
+  async transcribeAudio(req: TranscribeRequest): Promise<TranscribeResponse> {
+    this.transcribedRequests.push(req);
+    return this.transcribeImpl(req);
+  }
+  async synthesizeSpeech(req: SynthesizeRequest): Promise<SynthesizeResponse> {
+    this.synthesizedRequests.push(req);
+    return this.synthesizeImpl(req);
+  }
+  async stopSpeech(): Promise<void> {
+    this.stopSpeechCalls += 1;
+  }
 }
 
 function makeModel(partial: Partial<ModelEntry> & Pick<ModelEntry, "model_id" | "category" | "status" | "tone">): ModelEntry {
@@ -736,5 +768,231 @@ describe("P5 small feature gaps: exclusions, network folders, explicit downloade
     );
     const saveBtn = (await screen.findByRole("button", { name: "Save" })) as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(false);
+  });
+});
+
+describe("P6 voice search (STT) and read aloud (TTS)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("enables mic for AVAILABLE STT, captures, transcribes locally, allows editing, and handles mic denial gracefully", async () => {
+    const wavBytes = audioLib.encodeWav16kMono(new Int16Array(320));
+    vi.spyOn(audioLib, "startMicCapture").mockResolvedValue({
+      stop: async () => wavBytes,
+      cancel: vi.fn(),
+    });
+
+    const api = new FakeApi();
+    api.models = [
+      makeModel({ model_id: "m-emb", category: "embedding", status: "AVAILABLE", tone: "amber" }),
+      makeModel({
+        model_id: "m-stt",
+        category: "stt",
+        display_name: "Whisper (ggml-small-q5_1)",
+        status: "AVAILABLE",
+        tone: "amber",
+        runtime: "whisper.cpp",
+      }),
+    ];
+    api.scopes = [makeScope({ scope_id: "s-1", display_path: "C:\\Projects" })];
+    api.transcribeImpl = async () => ({ text: "fatura nisan" });
+    const submittedQueries: string[] = [];
+    api.searchImpl = async (req) => {
+      submittedQueries.push(req.text);
+      return {
+        session_id: "c-v1",
+        turn_id: "a-v1",
+        kind: "results",
+        count: 1,
+        choices: [],
+        results: [
+          {
+            result_ref: "r-v1",
+            title: "nisan-fatura.pdf",
+            display_path: "C:\\Projects\\nisan-fatura.pdf",
+            project: null,
+            file_kind: "pdf",
+            snippet: "Toplam 1250 TL",
+            highlights: [],
+            modified_at: "2026-11-19T10:00:00Z",
+            match_reason: "transcript",
+          },
+        ],
+        question: null,
+        understood: null,
+        answer: null,
+        summary: null,
+        picked_by_llm: false,
+        picked_count: 0,
+        notice: null,
+        degraded_llm: true,
+        searched_scope_count: 1,
+      };
+    };
+
+    window.location.hash = "#/search";
+    const { container } = render(<Root surface="app" api={api} initialSnapshot={snap()} />);
+
+    const micBtn = (await screen.findByRole("button", { name: "Voice search" })) as HTMLButtonElement;
+    expect(micBtn.disabled).toBe(false);
+    fireEvent.click(micBtn);
+
+    const voiceDialog = await screen.findByRole("dialog", { name: "Voice search" });
+    expect(voiceDialog).toBeTruthy();
+    expect(await axeViolations(container)).toEqual([]);
+
+    fireEvent.click(within(voiceDialog).getAllByRole("button", { name: "Stop" })[0]);
+    const reviewInput = (await screen.findByLabelText("What I heard — you can edit it")) as HTMLInputElement;
+    expect(reviewInput.value).toBe("fatura nisan");
+    expect(api.transcribedRequests.length).toBe(1);
+
+    fireEvent.change(reviewInput, { target: { value: "fatura nisan 2026" } });
+    fireEvent.click(within(voiceDialog).getByRole("button", { name: /Search/ }));
+
+    expect(await screen.findByText("nisan-fatura.pdf")).toBeTruthy();
+    expect(submittedQueries).toEqual(["fatura nisan 2026"]);
+    fireEvent.click(screen.getByRole("button", { name: /Preview/ }));
+    expect(await screen.findByText("Spoken words")).toBeTruthy();
+
+    // Microphone permission denial shows honest fallback while typed search remains enabled.
+    vi.spyOn(audioLib, "startMicCapture").mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+    fireEvent.click(screen.getByRole("button", { name: "Voice search" }));
+    expect(await screen.findByText("Microphone access was denied")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(screen.getByPlaceholderText("Ask something else...")).toBeTruthy();
+  });
+
+  it("provides stoppable Read aloud control when TTS is installed and hides it when missing", async () => {
+    const playSpy = vi.fn().mockResolvedValue(undefined);
+    const pauseSpy = vi.fn();
+    class FakeAudio {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(public src: string) {}
+      play() { return playSpy(); }
+      pause() { pauseSpy(); }
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+
+    const api = new FakeApi();
+    api.models = [
+      makeModel({ model_id: "m-emb", category: "embedding", status: "AVAILABLE", tone: "amber" }),
+      makeModel({
+        model_id: "m-tts",
+        category: "tts",
+        display_name: "Piper (tr_TR-dfki-medium)",
+        status: "AVAILABLE",
+        tone: "amber",
+        runtime: "piper",
+      }),
+    ];
+    api.scopes = [makeScope({ scope_id: "s-1", display_path: "C:\\Projects" })];
+    api.searchImpl = async () => ({
+      session_id: "c-t1",
+      turn_id: "a-t1",
+      kind: "results",
+      count: 1,
+      choices: [],
+      results: [
+        {
+          result_ref: "r-t1",
+          title: "vize.jpg",
+          display_path: "C:\\Projects\\vize.jpg",
+          project: null,
+          file_kind: "image",
+          snippet: null,
+          highlights: [],
+          modified_at: "2026-11-19T10:00:00Z",
+          match_reason: "caption",
+        },
+      ],
+      question: null,
+      understood: null,
+      answer: { text: "UK vizen 12 Mart 2024 tarihli.", result_ref: "r-t1" },
+      summary: null,
+      picked_by_llm: true,
+      picked_count: 1,
+      notice: null,
+      degraded_llm: false,
+      searched_scope_count: 1,
+    });
+
+    window.location.hash = "#/search";
+    render(<Root surface="app" api={api} initialSnapshot={snap()} />);
+    const input = await screen.findByPlaceholderText(/Ask about a file/);
+    fireEvent.change(input, { target: { value: "uk vize" } });
+    fireEvent.submit(input.closest("form")!);
+
+    const readBtn = await screen.findByRole("button", { name: "Read aloud" });
+    fireEvent.click(readBtn);
+
+    await waitFor(() =>
+      expect(api.synthesizedRequests).toEqual([{ text: "UK vizen 12 Mart 2024 tarihli." }]),
+    );
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    const stopBtn = await screen.findByRole("button", { name: "Stop reading" });
+    fireEvent.click(stopBtn);
+    await waitFor(() => expect(api.stopSpeechCalls).toBeGreaterThanOrEqual(1));
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+
+    // Removing TTS hides the control cleanly.
+    await api.removeModel("m-tts");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Read aloud" })).toBeNull());
+  });
+
+  it("displays verified STT & TTS download presets including Turkish CC-BY-NC-SA-4.0 dataset notice", async () => {
+    const api = new FakeApi();
+    api.downloadable = [
+      {
+        preset_id: "whisper-small-q5_1",
+        category: "stt",
+        display_name: "Whisper small (Q5_1 · TR + EN)",
+        recommended: true,
+        repo: "ggerganov/whisper.cpp",
+        revision: "5359861c739e955e79d9a303bcbc70fb988958b1",
+        origin_host: "huggingface.co",
+        license_name: "MIT",
+        license_url: "https://huggingface.co/ggerganov/whisper.cpp",
+        default_dir: "C:\\models\\whisper-small-q5_1",
+        total_bytes: 190_085_487,
+        files: [{ filename: "ggml-small-q5_1.bin", size_bytes: 190_085_487, sha256: "ae85" }],
+        capabilities: ["voice_input", "audio_transcript", "tr", "en"],
+      },
+      {
+        preset_id: "piper-tr-dfki-medium",
+        category: "tts",
+        display_name: "Piper Turkish (dfki medium · non-commercial dataset)",
+        recommended: true,
+        repo: "rhasspy/piper-voices",
+        revision: "04ca88f5685ca5253c701af3687e155b113bd512",
+        origin_host: "huggingface.co",
+        license_name: "CC-BY-NC-SA-4.0 (dataset) / MIT (weights card)",
+        license_url: "https://huggingface.co/rhasspy/piper-voices/blob/main/tr/tr_TR/dfki/medium/MODEL_CARD",
+        default_dir: "C:\\models\\piper-tr-dfki-medium",
+        total_bytes: 63_206_254,
+        files: [
+          { filename: "tr_TR-dfki-medium.onnx", size_bytes: 63_201_294, sha256: "2844" },
+          { filename: "tr_TR-dfki-medium.onnx.json", size_bytes: 4_960, sha256: "13eb" },
+        ],
+        capabilities: ["read_aloud", "tr"],
+      },
+    ];
+
+    window.location.hash = "#/models";
+    const { container } = render(<Root surface="app" api={api} initialSnapshot={snap()} />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "Add model" }))[0]);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "STT" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Download official model" }));
+    expect(await screen.findByText(/ggerganov\/whisper\.cpp/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("radio", { name: "TTS" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Download official model" }));
+    expect(
+      (await screen.findAllByText(/CC-BY-NC-SA-4\.0 \(dataset\)/)).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(await axeViolations(container)).toEqual([]);
   });
 });

@@ -4406,6 +4406,7 @@ dependencies = [
 name = "tamgabul-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "notify",
  "rusqlite",
  "serde",
@@ -4427,6 +4428,7 @@ name = "tamgabul-platform"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "tempfile",
  "windows 0.61.3",
 ]
 

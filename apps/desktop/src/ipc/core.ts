@@ -22,6 +22,10 @@ import type { ScopePreview } from "../bindings/ScopePreview";
 import type { ScopeSummary } from "../bindings/ScopeSummary";
 import type { SearchRequest } from "../bindings/SearchRequest";
 import type { SearchResponse } from "../bindings/SearchResponse";
+import type { SynthesizeRequest } from "../bindings/SynthesizeRequest";
+import type { SynthesizeResponse } from "../bindings/SynthesizeResponse";
+import type { TranscribeRequest } from "../bindings/TranscribeRequest";
+import type { TranscribeResponse } from "../bindings/TranscribeResponse";
 import type { TtlPolicy } from "../bindings/TtlPolicy";
 import type { ValidationStep } from "../bindings/ValidationStep";
 
@@ -250,5 +254,20 @@ export class CoreApi implements Api {
   async openDataFolder() {
     if (!isTauri()) throw noCore("open_data_folder");
     await call("open_data_folder");
+  }
+
+  async transcribeAudio(req: TranscribeRequest): Promise<TranscribeResponse> {
+    if (!isTauri()) throw noCore("transcribe_audio");
+    return call<TranscribeResponse>("transcribe_audio", { req });
+  }
+
+  async synthesizeSpeech(req: SynthesizeRequest): Promise<SynthesizeResponse> {
+    if (!isTauri()) throw noCore("synthesize_speech");
+    return call<SynthesizeResponse>("synthesize_speech", { req });
+  }
+
+  async stopSpeech() {
+    if (!isTauri()) return;
+    await call("stop_speech");
   }
 }

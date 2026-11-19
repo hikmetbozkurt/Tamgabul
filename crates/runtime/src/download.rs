@@ -18,7 +18,7 @@ use tamgabul_core::error::ErrorCode;
 use tamgabul_core::model::ModelCategory;
 
 use crate::eg2::{self, PinnedFile};
-use crate::llm;
+use crate::{llm, stt, tts};
 
 pub const ORIGIN_HOST: &str = "huggingface.co";
 const MAX_REDIRECTS: usize = 5;
@@ -32,6 +32,8 @@ pub struct ModelPreset {
     pub display_name: &'static str,
     pub recommended: bool,
     pub repo: &'static str,
+    /// Optional subdirectory inside `repo` before file names (e.g. piper voice path).
+    pub repo_prefix: &'static str,
     pub commit: &'static str,
     pub license_name: &'static str,
     pub license_url: &'static str,
@@ -49,6 +51,10 @@ impl ModelPreset {
 const EG2_BF16_FILES: &[PinnedFile] = &[eg2::BF16_MODEL, eg2::BF16_MMPROJ];
 const EG2_Q8_FILES: &[PinnedFile] = &[eg2::Q8_MODEL, eg2::Q8_MMPROJ];
 const LLM_E2B_FILES: &[PinnedFile] = &[llm::Q4_0_MODEL, llm::MMPROJ_Q8_0];
+const STT_SMALL_Q5_FILES: &[PinnedFile] = &[stt::SMALL_Q5_1_MODEL];
+const STT_TURBO_Q5_FILES: &[PinnedFile] = &[stt::LARGE_V3_TURBO_Q5_0_MODEL];
+const TTS_TR_DFKI_FILES: &[PinnedFile] = &[tts::TR_DFKI_ONNX, tts::TR_DFKI_JSON];
+const TTS_EN_LJSPEECH_FILES: &[PinnedFile] = &[tts::EN_LJSPEECH_ONNX, tts::EN_LJSPEECH_JSON];
 
 pub const CATALOG: &[ModelPreset] = &[
     ModelPreset {
@@ -57,6 +63,7 @@ pub const CATALOG: &[ModelPreset] = &[
         display_name: "EmbeddingGemma 2 (BF16 + image/audio)",
         recommended: true,
         repo: eg2::PINNED_REPO,
+        repo_prefix: "",
         commit: eg2::PINNED_COMMIT,
         license_name: "Apache-2.0",
         license_url: "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF",
@@ -70,6 +77,7 @@ pub const CATALOG: &[ModelPreset] = &[
         display_name: "EmbeddingGemma 2 (Q8_0 + image/audio)",
         recommended: false,
         repo: eg2::PINNED_REPO,
+        repo_prefix: "",
         commit: eg2::PINNED_COMMIT,
         license_name: "Apache-2.0",
         license_url: "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF",
@@ -83,12 +91,69 @@ pub const CATALOG: &[ModelPreset] = &[
         display_name: "Gemma 4 E2B-it (Q4_0 + vision)",
         recommended: true,
         repo: llm::PINNED_REPO,
+        repo_prefix: "",
         commit: llm::PINNED_COMMIT,
         license_name: "Apache-2.0",
         license_url: "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF",
         default_subdir: "gemma-4-e2b-it",
         files: LLM_E2B_FILES,
         capabilities: &["search_plan", "result_pick", "image_caption"],
+    },
+    ModelPreset {
+        preset_id: "whisper-small-q5_1",
+        category: ModelCategory::Stt,
+        display_name: "Whisper small (Q5_1 · TR + EN)",
+        recommended: true,
+        repo: stt::PINNED_REPO,
+        repo_prefix: "",
+        commit: stt::PINNED_COMMIT,
+        license_name: "MIT",
+        license_url: "https://huggingface.co/ggerganov/whisper.cpp",
+        default_subdir: "whisper-small-q5_1",
+        files: STT_SMALL_Q5_FILES,
+        capabilities: &["voice_input", "audio_transcript", "tr", "en"],
+    },
+    ModelPreset {
+        preset_id: "whisper-large-v3-turbo-q5_0",
+        category: ModelCategory::Stt,
+        display_name: "Whisper large-v3-turbo (Q5_0 · TR + EN)",
+        recommended: false,
+        repo: stt::PINNED_REPO,
+        repo_prefix: "",
+        commit: stt::PINNED_COMMIT,
+        license_name: "MIT",
+        license_url: "https://huggingface.co/ggerganov/whisper.cpp",
+        default_subdir: "whisper-large-v3-turbo-q5_0",
+        files: STT_TURBO_Q5_FILES,
+        capabilities: &["voice_input", "audio_transcript", "tr", "en"],
+    },
+    ModelPreset {
+        preset_id: "piper-tr-dfki-medium",
+        category: ModelCategory::Tts,
+        display_name: "Piper Turkish (dfki medium · non-commercial dataset)",
+        recommended: true,
+        repo: tts::PINNED_REPO,
+        repo_prefix: tts::TR_DFKI_PREFIX,
+        commit: tts::PINNED_COMMIT,
+        license_name: "CC-BY-NC-SA-4.0 (dataset) / MIT (weights card)",
+        license_url: "https://huggingface.co/rhasspy/piper-voices/blob/main/tr/tr_TR/dfki/medium/MODEL_CARD",
+        default_subdir: "piper-tr-dfki-medium",
+        files: TTS_TR_DFKI_FILES,
+        capabilities: &["read_aloud", "tr"],
+    },
+    ModelPreset {
+        preset_id: "piper-en-ljspeech-medium",
+        category: ModelCategory::Tts,
+        display_name: "Piper English US (ljspeech medium)",
+        recommended: false,
+        repo: tts::PINNED_REPO,
+        repo_prefix: tts::EN_LJSPEECH_PREFIX,
+        commit: tts::PINNED_COMMIT,
+        license_name: "Public Domain (LJ Speech dataset) / MIT",
+        license_url: "https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/ljspeech/medium/MODEL_CARD",
+        default_subdir: "piper-en-ljspeech-medium",
+        files: TTS_EN_LJSPEECH_FILES,
+        capabilities: &["read_aloud", "en"],
     },
 ];
 
@@ -102,8 +167,8 @@ pub fn find_preset(preset_id: &str) -> Option<&'static ModelPreset> {
 
 pub fn file_url(preset: &ModelPreset, file: &PinnedFile) -> String {
     format!(
-        "https://{ORIGIN_HOST}/{}/resolve/{}/{}",
-        preset.repo, preset.commit, file.name
+        "https://{ORIGIN_HOST}/{}/resolve/{}/{}{}",
+        preset.repo, preset.commit, preset.repo_prefix, file.name
     )
 }
 
@@ -496,10 +561,10 @@ mod tests {
     }
 
     #[test]
-    fn catalog_is_pinned_https_and_apache2() {
-        assert_eq!(catalog().len(), 3);
+    fn catalog_is_pinned_https_with_verified_hashes() {
+        assert_eq!(catalog().len(), 7);
         for p in catalog() {
-            assert_eq!(p.license_name, "Apache-2.0");
+            assert!(!p.license_name.is_empty());
             assert!(p.license_url.starts_with("https://huggingface.co/"));
             assert!(!p.files.is_empty());
             let mut sum = 0u64;
@@ -509,7 +574,10 @@ mod tests {
                 assert!(url.contains(p.commit), "{url}");
                 assert!(url.ends_with(f.name), "{url}");
                 assert!(
-                    eg2::is_pinned(f.sha256) || llm::is_pinned(f.sha256),
+                    eg2::is_pinned(f.sha256)
+                        || llm::is_pinned(f.sha256)
+                        || stt::is_pinned(f.sha256)
+                        || tts::is_pinned(f.sha256),
                     "hash for {} must be pinned",
                     f.name
                 );

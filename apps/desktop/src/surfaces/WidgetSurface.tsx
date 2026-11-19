@@ -5,11 +5,13 @@ import { useResource } from "../state/data";
 import { useSettings } from "../state/settings";
 import { hideSelf, openApp } from "../ipc/bridge";
 import { relativeTime } from "../lib/format";
+import { isUsable } from "../lib/health";
 import { SearchBar } from "../features/search/SearchBar";
 import { CompactResult } from "../features/search/ResultCard";
 import { useSearch } from "../features/search/useSearch";
 import { useResultActions } from "../features/search/useResultActions";
 import { VoiceView } from "../features/voice/VoiceOverlay";
+import { useSpeech } from "../features/voice/useSpeech";
 
 /** Compact widget (W1–W3): bottom-right on Windows, top-center on macOS. */
 export function WidgetSurface() {
@@ -17,23 +19,30 @@ export function WidgetSurface() {
   const health = useResource((a) => a.health());
   const history = useResource((a) => a.listHistory().then((h) => h.slice(0, 3)).catch(() => []));
   const s = useSearch();
+  const speech = useSpeech();
   const { settings } = useSettings();
   const actions = useResultActions();
   const [voice, setVoice] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !voice && !document.querySelector(".scrim")) hideSelf();
+      if (e.key === "Escape" && !voice && !document.querySelector(".scrim")) {
+        speech.stop();
+        hideSelf();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [voice]);
+  }, [speech, voice]);
 
   const h = health.data;
   const emb = h?.models.find((m) => m.category === "embedding");
   const needsSetup = emb?.tone === "red";
   const enabled = !!h?.semantic_search_enabled;
-  const mic = h?.models.find((m) => m.category === "stt")?.tone === "green";
+  const sttStatus = h?.models.find((m) => m.category === "stt")?.status;
+  const ttsStatus = h?.models.find((m) => m.category === "tts")?.status;
+  const mic = !!sttStatus && isUsable(sttStatus);
+  const ttsAvailable = !!ttsStatus && isUsable(ttsStatus);
   const last = [...s.turns].reverse().find((x) => x.role === "assistant");
 
   const body = () => {
@@ -86,7 +95,28 @@ export function WidgetSurface() {
       }
       return (
         <>
-          {last.answer && <div className="w-bubble direct-answer"><strong>{last.answer.text}</strong></div>}
+          {last.answer && (
+            <div className="w-bubble direct-answer">
+              <strong>{last.answer.text}</strong>
+              {ttsAvailable && (
+                <div>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={speech.loadingId === last.turn_id}
+                    onClick={() => speech.speak(last.turn_id, last.answer!.text)}
+                  >
+                    <Icon name={speech.speakingId === last.turn_id ? "stop" : "speakerWaves"} size={14} />
+                    {speech.loadingId === last.turn_id
+                      ? t("voice.reading")
+                      : speech.speakingId === last.turn_id
+                        ? t("voice.stopReading")
+                        : t("voice.readAloud")}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {last.results.slice(0, 3).map((r, i) => <CompactResult key={r.result_ref} r={r} primary={i === 0} onOpen={actions.onOpen} />)}
           {(last.count ?? 0) > 3 && (
             <button type="button" className="btn-link" style={{ alignSelf: "center" }} onClick={() => openApp("search")}>{t("widget.seeAll", { n: last.count ?? 0 })}</button>
@@ -117,14 +147,14 @@ export function WidgetSurface() {
         <div className="w-brand" data-tauri-drag-region><Logo size={20} />Tamgabul</div>
         <div className="btns">
           {last && !voice && (
-            <button type="button" className="w-icon" aria-label={t("search.new")} title={t("search.new")} onClick={s.reset}>
+            <button type="button" className="w-icon" aria-label={t("search.new")} title={t("search.new")} onClick={() => { speech.stop(); s.reset(); }}>
               <Icon name="plus" size={16} stroke={1.8} />
             </button>
           )}
-          <button type="button" className="w-icon" aria-label={t("widget.expand")} title={t("widget.expand")} onClick={() => openApp(needsSetup ? "welcome" : "search")}>
+          <button type="button" className="w-icon" aria-label={t("widget.expand")} title={t("widget.expand")} onClick={() => { speech.stop(); openApp(needsSetup ? "welcome" : "search"); }}>
             <Icon name="expand" size={16} stroke={1.8} />
           </button>
-          <button type="button" className="w-icon" aria-label={t("window.hide")} title={t("window.hide")} onClick={() => hideSelf()}>
+          <button type="button" className="w-icon" aria-label={t("window.hide")} title={t("window.hide")} onClick={() => { speech.stop(); hideSelf(); }}>
             <Icon name="close" size={16} stroke={1.8} />
           </button>
         </div>
@@ -141,8 +171,8 @@ export function WidgetSurface() {
               disabledText={t("search.disabledShort")}
               micAvailable={mic}
               autoFocus
-              onSubmit={(q) => s.submit(q)}
-              onMic={() => setVoice(true)}
+              onSubmit={(q) => { speech.stop(); s.submit(q); }}
+              onMic={() => { speech.stop(); setVoice(true); }}
             />
           </div>
           <div className="w-body">{body()}</div>

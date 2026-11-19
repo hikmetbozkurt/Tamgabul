@@ -21,8 +21,10 @@ use tamgabul_core::index::walk;
 use tamgabul_core::model::{ModelCategory, ModelStatus};
 use tamgabul_core::registry::{self, ModelRecord};
 use tamgabul_runtime::download::{self, DownloadError};
+use tamgabul_runtime::stt::WhisperServerConfig;
+use tamgabul_runtime::tts::{PiperConfig, PiperLauncher};
 use tamgabul_runtime::worker::{Launcher, LlamaServerConfig, ProcessLauncher, Worker};
-use tamgabul_runtime::{eg2, llm, locate, smoke, ModelManager, Policy, RuntimeError};
+use tamgabul_runtime::{eg2, llm, locate, smoke, stt, tts, ModelManager, Policy, RuntimeError};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
@@ -141,20 +143,55 @@ impl Launcher for LlmLauncher {
     }
 }
 
+/// Starts an STT (`whisper-server`) worker on demand.
+struct SttLauncher {
+    path: PathBuf,
+}
+
+impl Launcher for SttLauncher {
+    fn launch(&self, cancel: &AtomicBool) -> Result<Arc<dyn Worker>, RuntimeError> {
+        let files = stt::locate(&self.path)?;
+        let exe = locate::find_whisper_server(None)?.path;
+        let cfg = WhisperServerConfig::new(exe, files.model);
+        Ok(Arc::new(
+            ProcessLauncher::whisper_server(cfg).launch_process(cancel)?,
+        ))
+    }
+}
+
+/// Starts a TTS (`piper`) loopback worker on demand.
+struct TtsLauncher {
+    path: PathBuf,
+}
+
+impl Launcher for TtsLauncher {
+    fn launch(&self, cancel: &AtomicBool) -> Result<Arc<dyn Worker>, RuntimeError> {
+        let files = tts::locate(&self.path)?;
+        let probe = tts::probe(&files)?;
+        let exe = locate::find_piper(None)?.path;
+        let cfg = PiperConfig::new(exe, files.model, files.config, probe.sample_rate);
+        PiperLauncher::new(cfg).launch(cancel)
+    }
+}
+
 /// Make a registered model known to the manager (nothing starts).
 pub(crate) fn attach(mgr: &ModelManager, rec: &ModelRecord) {
     let path = PathBuf::from(&rec.path);
     let launcher: Arc<dyn Launcher> = match rec.category {
         ModelCategory::Embedding => Arc::new(Eg2Launcher { path }),
         ModelCategory::Llm => Arc::new(LlmLauncher { path }),
-        ModelCategory::Stt | ModelCategory::Tts => return,
+        ModelCategory::Stt => Arc::new(SttLauncher { path }),
+        ModelCategory::Tts => Arc::new(TtsLauncher { path }),
     };
     mgr.register(&rec.model_id, launcher, policy(&rec.ttl));
 }
 
 /// Model categories that can run in this build.
 fn runnable(c: ModelCategory) -> bool {
-    matches!(c, ModelCategory::Embedding | ModelCategory::Llm)
+    matches!(
+        c,
+        ModelCategory::Embedding | ModelCategory::Llm | ModelCategory::Stt | ModelCategory::Tts
+    )
 }
 
 /// App start: make the active models known to the manager. Nothing loads.
@@ -180,7 +217,14 @@ fn entry(rec: &ModelRecord, mgr: &ModelManager) -> ModelEntry {
         (ModelStatus::Missing, Some(ErrorCode::ModelMissing))
     } else if let Some(s) = &snap {
         if s.last_error == Some(RuntimeError::RuntimeNotFound) {
-            error_key = Some("model.err.runtime_missing".to_string());
+            error_key = Some(
+                match rec.category {
+                    ModelCategory::Stt => "model.err.runtime_missing.stt",
+                    ModelCategory::Tts => "model.err.runtime_missing.tts",
+                    ModelCategory::Embedding | ModelCategory::Llm => "model.err.runtime_missing",
+                }
+                .to_string(),
+            );
         }
         (s.status, s.last_error.as_ref().map(RuntimeError::code))
     } else {
@@ -614,6 +658,242 @@ fn validate_llm(
     }))
 }
 
+fn validate_stt(
+    path: &str,
+    steps: &mut Steps,
+    cancel: &AtomicBool,
+) -> Result<Option<ModelRecord>, IpcError> {
+    steps.run("readable");
+    let p = PathBuf::from(path);
+    if !p.exists() {
+        steps.fail("readable", "addModel.fail.notFound")?;
+        return Ok(None);
+    }
+    steps.ok("readable", None);
+    cancelled(cancel)?;
+
+    steps.run("format");
+    let (files, probe) = match stt::locate(&p).and_then(|f| stt::probe(&f.model).map(|pr| (f, pr)))
+    {
+        Ok(x) => x,
+        Err(_) => {
+            steps.fail("format", "addModel.fail.format.stt")?;
+            return Ok(None);
+        }
+    };
+    let lang_label = if probe.multilingual { "TR + EN" } else { "EN" };
+    steps.ok(
+        "format",
+        format!("{} · {} · {lang_label}", probe.size_tier, probe.ftype_name),
+    );
+    cancelled(cancel)?;
+
+    steps.run("checksum");
+    let hash = match eg2::sha256_file(&files.model, |_, _| {}) {
+        Ok(h) => h,
+        Err(_) => {
+            steps.fail("checksum", "addModel.fail.readable.stt")?;
+            return Ok(None);
+        }
+    };
+    cancelled(cancel)?;
+    let pinned = stt::is_pinned(&hash);
+    steps.ok(
+        "checksum",
+        Some(
+            if pinned {
+                "addModel.detail.pinned"
+            } else {
+                "addModel.detail.unpinned"
+            }
+            .to_string(),
+        ),
+    );
+    cancelled(cancel)?;
+
+    steps.run("runtime");
+    let Ok(found) = locate::find_whisper_server(None) else {
+        steps.fail("runtime", "addModel.fail.runtime.stt")?;
+        return Ok(None);
+    };
+    let version =
+        locate::probe_whisper_server(&found.path).unwrap_or_else(|_| "whisper.cpp".into());
+    steps.ok("runtime", format!("whisper.cpp · {version}"));
+    cancelled(cancel)?;
+
+    steps.run("smoke");
+    let cfg = WhisperServerConfig::new(found.path, files.model.clone());
+    match smoke::stt_smoke(cfg, cancel) {
+        Ok(r) => {
+            steps.ok(
+                "smoke",
+                format!("WAV ✓ · {:.1} s load", r.cold_load.as_secs_f64()),
+            );
+        }
+        Err(RuntimeError::Cancelled) => {
+            return Err(IpcError::new(ErrorCode::UserCancelled, "cancelled"))
+        }
+        Err(_) => {
+            steps.fail("smoke", "addModel.fail.smoke.stt")?;
+            return Ok(None);
+        }
+    }
+
+    let mut caps = vec!["voice_input".into(), "audio_transcript".into()];
+    if probe.multilingual {
+        caps.push("tr".into());
+        caps.push("en".into());
+    } else {
+        caps.push("en".into());
+    }
+    Ok(Some(ModelRecord {
+        model_id: new_model_id(),
+        category: ModelCategory::Stt,
+        display_name: probe.display_name,
+        provider: Some(if pinned {
+            format!("{} · {}", stt::PINNED_REPO, probe.ftype_name)
+        } else {
+            format!("GGML · {}", probe.ftype_name)
+        }),
+        path: path.to_string(),
+        format: "ggml".into(),
+        architecture: Some(probe.size_tier.into()),
+        weights_sha256: Some(hash),
+        model_revision: pinned.then(|| stt::PINNED_COMMIT.to_string()),
+        license_name: pinned.then(|| "MIT".to_string()),
+        runtime_adapter: "whisper.cpp".into(),
+        adapter_version: version,
+        capabilities: caps,
+        embedding_dim: None,
+        status: ModelStatus::Available,
+        last_error_code: None,
+        validated_at: None,
+        ttl: TtlPolicy::Minutes5,
+    }))
+}
+
+fn validate_tts(
+    path: &str,
+    steps: &mut Steps,
+    cancel: &AtomicBool,
+) -> Result<Option<ModelRecord>, IpcError> {
+    steps.run("readable");
+    let p = PathBuf::from(path);
+    if !p.exists() {
+        steps.fail("readable", "addModel.fail.notFound")?;
+        return Ok(None);
+    }
+    steps.ok("readable", None);
+    cancelled(cancel)?;
+
+    steps.run("format");
+    let (files, probe) = match tts::locate(&p).and_then(|f| tts::probe(&f).map(|pr| (f, pr))) {
+        Ok(x) => x,
+        Err(_) => {
+            steps.fail("format", "addModel.fail.format.tts")?;
+            return Ok(None);
+        }
+    };
+    steps.ok(
+        "format",
+        format!(
+            "{} Hz · {}",
+            probe.sample_rate,
+            probe.language_code.as_deref().unwrap_or("piper")
+        ),
+    );
+    cancelled(cancel)?;
+
+    steps.run("checksum");
+    let mut pinned = true;
+    let mut model_hash = None;
+    for f in [&files.model, &files.config] {
+        cancelled(cancel)?;
+        match eg2::sha256_file(f, |_, _| {}) {
+            Ok(h) => {
+                pinned &= tts::is_pinned(&h);
+                if model_hash.is_none() {
+                    model_hash = Some(h);
+                }
+            }
+            Err(_) => {
+                steps.fail("checksum", "addModel.fail.readable.tts")?;
+                return Ok(None);
+            }
+        }
+    }
+    steps.ok(
+        "checksum",
+        Some(
+            if pinned {
+                "addModel.detail.pinned"
+            } else {
+                "addModel.detail.unpinned"
+            }
+            .to_string(),
+        ),
+    );
+    cancelled(cancel)?;
+
+    steps.run("runtime");
+    let Ok(found) = locate::find_piper(None) else {
+        steps.fail("runtime", "addModel.fail.runtime.tts")?;
+        return Ok(None);
+    };
+    let version = locate::probe_piper(&found.path).unwrap_or_else(|_| "piper".into());
+    steps.ok("runtime", format!("piper · {version}"));
+    cancelled(cancel)?;
+
+    steps.run("smoke");
+    let cfg = PiperConfig::new(
+        found.path,
+        files.model.clone(),
+        files.config.clone(),
+        probe.sample_rate,
+    );
+    match smoke::tts_smoke(cfg, cancel) {
+        Ok(r) => {
+            steps.ok("smoke", format!("WAV ✓ · {} Hz", r.sample_rate));
+        }
+        Err(RuntimeError::Cancelled) => {
+            return Err(IpcError::new(ErrorCode::UserCancelled, "cancelled"))
+        }
+        Err(_) => {
+            steps.fail("smoke", "addModel.fail.smoke.tts")?;
+            return Ok(None);
+        }
+    }
+
+    let mut caps = vec!["read_aloud".into()];
+    if let Some(lang) = &probe.language_code {
+        caps.push(lang.clone());
+    }
+    Ok(Some(ModelRecord {
+        model_id: new_model_id(),
+        category: ModelCategory::Tts,
+        display_name: probe.voice_name,
+        provider: Some(if pinned {
+            format!("{} · {} Hz", tts::PINNED_REPO, probe.sample_rate)
+        } else {
+            format!("Piper ONNX · {} Hz", probe.sample_rate)
+        }),
+        path: path.to_string(),
+        format: "onnx".into(),
+        architecture: Some(format!("piper-{}hz", probe.sample_rate)),
+        weights_sha256: model_hash,
+        model_revision: pinned.then(|| tts::PINNED_COMMIT.to_string()),
+        license_name: None,
+        runtime_adapter: "piper".into(),
+        adapter_version: version,
+        capabilities: caps,
+        embedding_dim: None,
+        status: ModelStatus::Available,
+        last_error_code: None,
+        validated_at: None,
+        ttl: TtlPolicy::Minutes5,
+    }))
+}
+
 fn run_validation(
     app: &AppHandle,
     req: RegisterModelRequest,
@@ -649,7 +929,9 @@ fn run_validation(
     );
     let record = match req.category {
         ModelCategory::Llm => validate_llm(&path, &mut steps, &cancel)?,
-        _ => validate_embedding(&path, &mut steps, &cancel)?,
+        ModelCategory::Stt => validate_stt(&path, &mut steps, &cancel)?,
+        ModelCategory::Tts => validate_tts(&path, &mut steps, &cancel)?,
+        ModelCategory::Embedding => validate_embedding(&path, &mut steps, &cancel)?,
     };
     let Some(record) = record else {
         return Ok(false);
@@ -1000,12 +1282,16 @@ mod tests {
     #[test]
     fn download_catalog_and_consent_gate_work_offline() {
         let entries = catalog_entries(Some(Path::new("/app-data")));
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 7);
         assert!(entries.iter().any(|e| e.preset_id == "eg2-bf16"));
         assert!(entries.iter().any(|e| e.preset_id == "gemma4-e2b-q4_0"));
+        assert!(entries.iter().any(|e| e.preset_id == "whisper-small-q5_1"));
         assert!(entries
             .iter()
-            .all(|e| e.license_name == "Apache-2.0" && e.origin_host == "huggingface.co"));
+            .any(|e| e.preset_id == "piper-tr-dfki-medium"));
+        assert!(entries
+            .iter()
+            .all(|e| !e.license_name.is_empty() && e.origin_host == "huggingface.co"));
 
         let err = validate_download_request(&DownloadModelRequest {
             preset_id: "eg2-bf16".into(),
