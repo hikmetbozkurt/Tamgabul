@@ -39,10 +39,60 @@ mod imp {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::process::Command;
+    use std::time::Duration;
+
+    pub fn working_set_bytes(pid: u32) -> Option<u64> {
+        let mut cmd = Command::new("ps");
+        cmd.args(["-o", "rss=", "-p", &pid.to_string()]);
+        let out = super::run_with_timeout(cmd, Duration::from_secs(3))?;
+        super::parse_ps_rss_kb(&String::from_utf8_lossy(&out)).map(|kb| kb * 1024)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod imp {
     pub fn working_set_bytes(_pid: u32) -> Option<u64> {
         None
+    }
+}
+
+/// Parse `ps -o rss= -p <pid>` output (resident memory in KiB).
+pub fn parse_ps_rss_kb(out: &str) -> Option<u64> {
+    out.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())?
+        .parse()
+        .ok()
+}
+
+fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Option<Vec<u8>> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // No console window flashing up.
+        cmd.creation_flags(0x0800_0000);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = child.wait_with_output().ok()?;
+                return status.success().then_some(out.stdout);
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
     }
 }
 
@@ -81,37 +131,22 @@ pub fn parse_nvidia_smi(out: &str) -> Option<GpuMemory> {
 }
 
 /// GPU memory in use, from `nvidia-smi` when the NVIDIA driver provides it.
-/// Other GPUs: `None`. Never waits more than ~3 s.
+/// Other GPUs (and Apple Silicon unified memory): `None`. Never waits more than ~3 s.
 pub fn gpu_memory() -> Option<GpuMemory> {
-    let mut c = Command::new("nvidia-smi");
-    c.args([
-        "--query-gpu=name,memory.used,memory.total",
-        "--format=csv,noheader,nounits",
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null());
-    #[cfg(windows)]
+    #[cfg(target_os = "macos")]
     {
-        use std::os::windows::process::CommandExt;
-        // No console window flashing up.
-        c.creation_flags(0x0800_0000);
+        None
     }
-    let mut child = c.spawn().ok()?;
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut c = Command::new("nvidia-smi");
+        c.args([
+            "--query-gpu=name,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ]);
+        let out = run_with_timeout(c, Duration::from_secs(3))?;
+        parse_nvidia_smi(&String::from_utf8_lossy(&out))
     }
-    let out = child.wait_with_output().ok()?;
-    parse_nvidia_smi(&String::from_utf8_lossy(&out.stdout))
 }
 
 #[cfg(test)]
@@ -138,7 +173,14 @@ mod tests {
         assert_eq!(parse_vmrss_kb("Name: a"), None);
     }
 
-    #[cfg(target_os = "linux")]
+    #[test]
+    fn ps_rss_line() {
+        assert_eq!(parse_ps_rss_kb("  49152 \n"), Some(49152));
+        assert_eq!(parse_ps_rss_kb("\n"), None);
+        assert_eq!(parse_ps_rss_kb("RSS\n"), None);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn own_process_has_memory() {
         assert!(process_memory_mb(std::process::id()).is_some());

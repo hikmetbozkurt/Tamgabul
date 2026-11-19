@@ -1,4 +1,7 @@
 import { useEffect, type ReactNode } from "react";
+import type { Api } from "./ipc/api";
+import type { AppSettings } from "./bindings/AppSettings";
+import type { SettingsSnapshot } from "./bindings/SettingsSnapshot";
 import { I18nProvider } from "./i18n";
 import { SettingsProvider, useSettings } from "./state/settings";
 import { DataProvider } from "./state/data";
@@ -15,11 +18,21 @@ function WithLanguage({ children }: { children: ReactNode }) {
   return <I18nProvider lang={settings.language}>{children}</I18nProvider>;
 }
 
-export function Root({ surface }: { surface: Surface }) {
+export function Root({
+  surface,
+  api,
+  initialSnapshot,
+  onUpdateSettings,
+}: {
+  surface: Surface;
+  api?: Api;
+  initialSnapshot?: SettingsSnapshot;
+  onUpdateSettings?: (next: AppSettings) => Promise<SettingsSnapshot>;
+}) {
   return (
-    <SettingsProvider>
+    <SettingsProvider initialSnapshot={initialSnapshot} onUpdate={onUpdateSettings}>
       <WithLanguage>
-        <DataProvider>
+        <DataProvider api={api}>
           <ToastProvider>
             {surface === "widget" ? <WidgetSurface /> : <AppSurface />}
           </ToastProvider>

@@ -20,7 +20,7 @@
 .w-tile { width: 44px; height: 44px; }
 .w-title { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-meta { font-size: 12.5px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.w-foot { height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 8px; border-top: 1px solid var(--line-soft); margin-top: 10px; }
+.w-foot { min-height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 6px 8px; border-top: 1px solid var(--line-soft); margin-top: 10px; }
 .w-link { height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-icon); background: transparent; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
 .w-link:hover { background: var(--chip); }
 .w-setup { padding: 14px; display: flex; align-items: center; gap: 12px; }

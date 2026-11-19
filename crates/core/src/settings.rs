@@ -75,11 +75,23 @@ pub struct AppSettings {
     pub llm_caption: bool,
 }
 
+pub fn default_hotkey_for_os(os: &str) -> &'static str {
+    if os == "macos" {
+        "Cmd+Shift+Space"
+    } else {
+        "Ctrl+Shift+Space"
+    }
+}
+
+pub fn default_hotkey() -> &'static str {
+    default_hotkey_for_os(std::env::consts::OS)
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: Language::En,
-            hotkey: "Ctrl+Shift+Space".into(),
+            hotkey: default_hotkey().into(),
             widget_position: WidgetPosition::PlatformDefault,
             mic_mode: MicMode::PushToTalk,
             launch_at_startup: false,
@@ -161,7 +173,9 @@ mod tests {
     fn defaults_are_english() {
         let s = AppSettings::default();
         assert_eq!(s.language, Language::En);
-        assert_eq!(s.hotkey, "Ctrl+Shift+Space");
+        assert_eq!(s.hotkey, default_hotkey());
+        assert_eq!(default_hotkey_for_os("macos"), "Cmd+Shift+Space");
+        assert_eq!(default_hotkey_for_os("windows"), "Ctrl+Shift+Space");
     }
 
     #[test]
@@ -191,7 +205,7 @@ mod tests {
     fn partial_or_corrupt_json_falls_back_to_defaults() {
         let s: AppSettings = serde_json::from_str(r#"{"language":"tr"}"#).unwrap();
         assert_eq!(s.language, Language::Tr);
-        assert_eq!(s.hotkey, "Ctrl+Shift+Space");
+        assert_eq!(s.hotkey, default_hotkey());
 
         let dir = tempfile::tempdir().unwrap();
         let conn = open_and_migrate(&dir.path().join("t.db")).unwrap();

@@ -1,6 +1,6 @@
 [package]
 name = "tamgabul-platform"
-description = "OS adapters (tray/menu bar, platform info) behind traits; real Windows tray lands in P5"
+description = "OS adapters (tray/menu bar, platform info, media services, resource usage) behind traits"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

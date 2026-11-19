@@ -7,6 +7,7 @@
 *.tflite
 *.litertlm
 runtimes/**/bin/
+packaging/staged/
 
 # Local data, databases, private corpora
 *.db

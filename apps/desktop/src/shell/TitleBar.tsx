@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Icon, Logo } from "../ui/icons";
 import { Status } from "../ui/primitives";
 import { useT } from "../i18n";
+import { isMacOs } from "../lib/platform";
 import { useResource } from "../state/data";
+import { useSettings } from "../state/settings";
 import { hideSelf, openWidget, toggleMaximize } from "../ipc/bridge";
 import { statusKey } from "../lib/labels";
 import type { StatusTone } from "../bindings/StatusTone";
@@ -12,6 +14,7 @@ const LEVEL_TONE: Record<string, StatusTone> = { ready: "green", degraded: "ambe
 /** Custom title bar (docs/24 D5): drag region, health menu, window buttons. */
 export function TitleBar({ onboarding }: { onboarding?: boolean }) {
   const t = useT();
+  const { snapshot } = useSettings();
   const health = useResource((a) => a.health());
   const [open, setOpen] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
@@ -73,7 +76,7 @@ export function TitleBar({ onboarding }: { onboarding?: boolean }) {
         <button type="button" className="winbtn" aria-label={t("window.maximize")} onClick={() => toggleMaximize()}>
           <Icon name="maximize" size={15} stroke={1.6} />
         </button>
-        <button type="button" className="winbtn close" aria-label={t("window.hide")} title={t("window.hide")} onClick={() => hideSelf()}>
+        <button type="button" className="winbtn close" aria-label={t(isMacOs(snapshot.os) ? "window.hideMac" : "window.hide")} title={t(isMacOs(snapshot.os) ? "window.hideMac" : "window.hide")} onClick={() => hideSelf()}>
           <Icon name="close" size={17} stroke={1.6} />
         </button>
       </div>

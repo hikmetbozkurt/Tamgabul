@@ -70,9 +70,20 @@ pub fn install(app: &AppHandle, lang: Language) -> tauri::Result<()> {
                     let _ = app.emit("tray_action", "unload_models".to_string());
                 });
             }
-            // Indexing arrives in P1; the UI reacts to the event.
             "toggle_indexing" => {
-                let _ = app.emit("tray_action", event.id.as_ref().to_string());
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let paused = crate::scopes::toggle_indexing(&app);
+                    let _ = app.emit(
+                        "tray_action",
+                        if paused {
+                            "pause_indexing"
+                        } else {
+                            "resume_indexing"
+                        }
+                        .to_string(),
+                    );
+                });
             }
             "quit" => quit(app),
             _ => {}
@@ -89,6 +100,10 @@ pub fn install(app: &AppHandle, lang: Language) -> tauri::Result<()> {
         });
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.icon_as_template(true);
     }
     builder.build(app)?;
     Ok(())

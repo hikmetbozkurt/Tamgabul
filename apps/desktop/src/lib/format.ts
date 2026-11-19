@@ -47,3 +47,7 @@ export function formatMb(mb: number, lang: Language): string {
     ? `${new Intl.NumberFormat(lang, { maximumFractionDigits: 1 }).format(mb / 1024)} GB`
     : `${new Intl.NumberFormat(lang, { maximumFractionDigits: 1 }).format(mb)} MB`;
 }
+
+export function formatBytes(bytes: number, lang: Language): string {
+  return formatMb(bytes / (1024 * 1024), lang);
+}

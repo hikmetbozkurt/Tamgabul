@@ -10,16 +10,25 @@ import { useToast } from "../../state/toast";
 import { formatMb } from "../../lib/format";
 import { isLoaded } from "../../lib/health";
 import { call, isTauri, pickSavePath, toIpcError } from "../../ipc/bridge";
-import { LICENSES } from "../../lib/licenses";
+import { APP_LICENSE, LICENSES } from "../../lib/licenses";
+import { isMacOs, metaKeyLabel } from "../../lib/platform";
 import type { ResourceUsage } from "../../bindings/ResourceUsage";
 import { currentSession } from "../../ipc/api";
 
-const MODIFIERS: Record<string, string> = { Control: "Ctrl", Shift: "Shift", Alt: "Alt", Meta: "Win" };
+const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
 
-/** Keydown → "Ctrl+Shift+Space"; null until a non-modifier key arrives. */
-export function comboFromEvent(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }): string | null {
-  if (e.key in MODIFIERS) return null;
-  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Win"].filter(Boolean) as string[];
+/** Keydown → "Ctrl+Shift+Space" (or "Cmd+Shift+Space" on macOS); null until a non-modifier key arrives. */
+export function comboFromEvent(
+  e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean },
+  os = "windows",
+): string | null {
+  if (MODIFIER_KEYS.has(e.key)) return null;
+  const meta = e.metaKey && metaKeyLabel(os);
+  const mods = (
+    isMacOs(os)
+      ? [meta, e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift"]
+      : [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", meta]
+  ).filter(Boolean) as string[];
   if (!mods.length) return null;
   const key = e.key === " " ? "Space" : e.key.length === 1 ? e.key.toUpperCase() : e.key;
   return [...mods, key].join("+");
@@ -36,7 +45,7 @@ function HotkeyField() {
     if (!capturing) return;
     e.preventDefault();
     if (e.key === "Escape") { setCapturing(false); return; }
-    const combo = comboFromEvent(e);
+    const combo = comboFromEvent(e, snapshot.os);
     if (!combo) return;
     setCapturing(false);
     try {
@@ -266,10 +275,10 @@ export function SettingsPage() {
           <section className="card settings-card" aria-labelledby="s-about">
             <h2 id="s-about">{t("settings.about")}</h2>
             <div className="kv">
-              <div><div className="k">{t("settings.version")}</div><div>{info?.app_version ?? "0.1.0"}</div></div>
+              <div><div className="k">{t("settings.version")}</div><div>{info?.app_version ?? __APP_VERSION__}</div></div>
               <div><div className="k">{t("settings.platform")}</div><div>{info ? `${info.os} · ${info.arch}` : t("settings.browserPreview")}</div></div>
               <div><div className="k">{t("settings.database")}</div><div>{health.data?.db_ok ? t("settings.dbOk") : t("settings.dbMissing")}</div></div>
-              <div><div className="k">{t("settings.licenses")}</div><button type="button" className="btn-link" onClick={() => setLicenses(true)}>{t("settings.licensesLink")}</button></div>
+              <div><div className="k">{t("settings.licenses")}</div><div><span>{APP_LICENSE}</span>{" · "}<button type="button" className="btn-link" onClick={() => setLicenses(true)}>{t("settings.licensesLink")}</button></div></div>
             </div>
           </section>
 
@@ -278,6 +287,7 @@ export function SettingsPage() {
 
       {licenses && (
         <Dialog title={t("settings.licensesTitle")} subtitle={t("settings.licensesIntro")} onClose={() => setLicenses(false)}>
+          <p className="small" style={{ color: "var(--ink-2)" }}>{t("settings.appLicense", { license: APP_LICENSE })}</p>
           <ul className="license-list">
             {LICENSES.map((l) => (
               <li key={l.name}>

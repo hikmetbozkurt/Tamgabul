@@ -16,6 +16,22 @@ fn window(app: &AppHandle, label: &str) -> Option<WebviewWindow> {
     app.get_webview_window(label)
 }
 
+/// Compute clamped physical coordinates for the widget on the monitor work area.
+fn compute_anchor_pos(
+    (ax, ay): (i32, i32),
+    (aw, ah): (i32, i32),
+    (ww, wh): (i32, i32),
+    anchor: WidgetAnchor,
+) -> (i32, i32) {
+    let max_x = ax + (aw - ww).max(0);
+    let max_y = ay + (ah - wh).max(0);
+    let (raw_x, raw_y) = match anchor {
+        WidgetAnchor::BottomRight => (ax + aw - ww - MARGIN, ay + ah - wh - MARGIN),
+        WidgetAnchor::TopCenter => (ax + (aw - ww) / 2, ay + MARGIN),
+    };
+    (raw_x.clamp(ax, max_x), raw_y.clamp(ay, max_y))
+}
+
 /// Place the widget bottom-right (Windows) or top-center (macOS) of the
 /// monitor work area, unless the user chose "last position".
 fn anchor_widget(app: &AppHandle, w: &WebviewWindow) {
@@ -31,16 +47,13 @@ fn anchor_widget(app: &AppHandle, w: &WebviewWindow) {
     };
     let Ok(size) = w.outer_size() else { return };
     let area = monitor.work_area();
-    let (ax, ay) = (area.position.x, area.position.y);
-    let (aw, ah) = (area.size.width as i32, area.size.height as i32);
-    let (ww, wh) = (size.width as i32, size.height as i32);
-    let pos = match PlatformInfo::current().default_widget_anchor() {
-        WidgetAnchor::BottomRight => {
-            PhysicalPosition::new(ax + aw - ww - MARGIN, ay + ah - wh - MARGIN)
-        }
-        WidgetAnchor::TopCenter => PhysicalPosition::new(ax + (aw - ww) / 2, ay + MARGIN),
-    };
-    let _ = w.set_position(pos);
+    let (x, y) = compute_anchor_pos(
+        (area.position.x, area.position.y),
+        (area.size.width as i32, area.size.height as i32),
+        (size.width as i32, size.height as i32),
+        PlatformInfo::current().default_widget_anchor(),
+    );
+    let _ = w.set_position(PhysicalPosition::new(x, y));
 }
 
 pub fn show_widget(app: &AppHandle) {
@@ -106,5 +119,36 @@ pub fn install_close_to_hide(app: &AppHandle) {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_positions_for_windows_macos_and_small_displays() {
+        assert_eq!(
+            compute_anchor_pos((0, 0), (1920, 1040), (560, 500), WidgetAnchor::BottomRight),
+            (1344, 524)
+        );
+        assert_eq!(
+            compute_anchor_pos((0, 25), (1512, 957), (560, 500), WidgetAnchor::TopCenter),
+            (476, 41)
+        );
+        assert_eq!(
+            compute_anchor_pos(
+                (-1920, 0),
+                (1920, 1040),
+                (560, 500),
+                WidgetAnchor::BottomRight
+            ),
+            (-576, 524)
+        );
+        // 200%-scaled or compact display smaller than the widget stays clamped inside work area.
+        assert_eq!(
+            compute_anchor_pos((0, 0), (500, 400), (560, 500), WidgetAnchor::BottomRight),
+            (0, 0)
+        );
     }
 }

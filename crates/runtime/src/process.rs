@@ -256,11 +256,11 @@ impl Drop for Supervised {
 }
 
 #[cfg(unix)]
-unsafe fn libc_kill(pid: i32, sig: i32) {
+unsafe fn libc_kill(pid: i32, sig: i32) -> i32 {
     extern "C" {
         fn kill(pid: i32, sig: i32) -> i32;
     }
-    kill(pid, sig);
+    kill(pid, sig)
 }
 
 #[cfg(all(test, unix))]
@@ -310,12 +310,18 @@ mod tests {
         let s = Supervised::spawn(cmd).unwrap();
         let pid = s.pid();
         drop(s);
-        // /proc entry disappears (or becomes a non-running state) once reaped.
+        #[cfg(target_os = "linux")]
         assert!(
             !std::path::Path::new(&format!("/proc/{pid}/cmdline")).exists()
                 || std::fs::read_to_string(format!("/proc/{pid}/stat"))
                     .map(|s| s.contains(") Z"))
                     .unwrap_or(true)
         );
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: signal 0 checks process existence without delivering a signal.
+            let alive = unsafe { libc_kill(pid as i32, 0) } == 0;
+            assert!(!alive, "child pid {pid} still alive after drop");
+        }
     }
 }

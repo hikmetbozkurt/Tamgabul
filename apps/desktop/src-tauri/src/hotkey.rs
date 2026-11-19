@@ -13,6 +13,7 @@ pub fn to_accelerator(hotkey: &str) -> String {
         .map(|p| match p.trim() {
             "Ctrl" | "ctrl" => "Control".to_string(),
             "Cmd" | "cmd" | "Win" | "win" => "Super".to_string(),
+            "Option" | "option" => "Alt".to_string(),
             other => other.to_string(),
         })
         .collect::<Vec<_>>()
@@ -44,8 +45,15 @@ mod tests {
     fn maps_ui_names_to_accelerators() {
         assert_eq!(to_accelerator("Ctrl+Shift+Space"), "Control+Shift+Space");
         assert_eq!(to_accelerator("Win + K"), "Super+K");
-        assert!(to_accelerator("Ctrl+Shift+Space")
-            .parse::<Shortcut>()
-            .is_ok());
+        assert_eq!(to_accelerator("Cmd+Shift+Space"), "Super+Shift+Space");
+        assert_eq!(to_accelerator("Ctrl+Option+Space"), "Control+Alt+Space");
+        for combo in [
+            "Ctrl+Shift+Space",
+            "Cmd+Shift+Space",
+            "Ctrl+Option+Space",
+            "Cmd+Option+K",
+        ] {
+            assert!(to_accelerator(combo).parse::<Shortcut>().is_ok(), "{combo}");
+        }
     }
 }

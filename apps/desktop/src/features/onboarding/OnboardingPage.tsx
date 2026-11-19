@@ -33,7 +33,7 @@ function Step({ n, state, title, badge, desc, action }: {
 export function OnboardingPage() {
   const t = useT();
   const { api } = useData();
-  const { settings } = useSettings();
+  const { settings, snapshot } = useSettings();
   const toast = useToast();
   const models = useResource((a) => a.listModels());
   const scopes = useResource((a) => a.listScopes().catch(() => []));
@@ -84,9 +84,10 @@ export function OnboardingPage() {
           />
           <Step
             n={4}
-            state="done"
+            state={snapshot.hotkey_active ? "done" : "todo"}
             title={t("welcome.hotkeyTitle")}
-            desc={<>{t("welcome.hotkeyDesc")} <kbd>{settings.hotkey.replace(/\+/g, " + ")}</kbd></>}
+            badge={!snapshot.hotkey_active ? <span className="badge badge-err">{t("status.ERROR")}</span> : undefined}
+            desc={<>{t(snapshot.hotkey_active ? "welcome.hotkeyDesc" : "welcome.hotkeyConflict")} <kbd>{settings.hotkey.replace(/\+/g, " + ")}</kbd></>}
             action={<a href="#/settings" className="btn">{t("settings.change")}</a>}
           />
         </ol>

@@ -1,5 +1,7 @@
 import { Icon, type IconName } from "../ui/icons";
 import { useT } from "../i18n";
+import { modKeyLabel } from "../lib/platform";
+import { useSettings } from "../state/settings";
 import { PAGES, type Page } from "./router";
 
 const ICONS: Record<(typeof PAGES)[number], IconName> = {
@@ -12,6 +14,8 @@ const ICONS: Record<(typeof PAGES)[number], IconName> = {
 
 export function SideNav({ page }: { page: Page }) {
   const t = useT();
+  const { snapshot } = useSettings();
+  const mod = modKeyLabel(snapshot.os);
   return (
     <nav className="sidenav" aria-label={t("nav.label")}>
       {PAGES.map((p, i) => (
@@ -20,7 +24,7 @@ export function SideNav({ page }: { page: Page }) {
           href={`#/${p}`}
           className="navitem"
           aria-current={page === p ? "page" : undefined}
-          title={`${t(`nav.${p}`)} (Ctrl+${i + 1})`}
+          title={`${t(`nav.${p}`)} (${mod}+${i + 1})`}
         >
           <Icon name={ICONS[p]} size={22} />
           {t(`nav.${p}`)}

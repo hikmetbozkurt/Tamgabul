@@ -1,9 +1,6 @@
-//! Platform adapters.
-//!
-//! P0-01 ships only traits and a placeholder tray host. The real Windows
-//! notification-area icon, close-to-hide and global hotkey are P5-01
-//! (`agent_tasks/06_WINDOWS_UI.md`); macOS menu bar comes after that.
+//! Platform adapters (docs/10): Windows-first, macOS-parity traits and info.
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -20,11 +17,53 @@ impl PlatformInfo {
         }
     }
 
+    pub fn is_macos(&self) -> bool {
+        self.os == "macos"
+    }
+
     /// Default widget corner (docs: bottom-right on Windows, top-center on macOS).
     pub fn default_widget_anchor(&self) -> WidgetAnchor {
         match self.os {
             "macos" => WidgetAnchor::TopCenter,
             _ => WidgetAnchor::BottomRight,
+        }
+    }
+
+    pub fn default_hotkey(&self) -> &'static str {
+        if self.is_macos() {
+            "Cmd+Shift+Space"
+        } else {
+            "Ctrl+Shift+Space"
+        }
+    }
+
+    /// Candidate shortcuts when the primary default is already owned by another app.
+    pub fn fallback_hotkeys(&self) -> &'static [&'static str] {
+        if self.is_macos() {
+            &["Cmd+Shift+Space", "Ctrl+Option+Space", "Cmd+Option+Space"]
+        } else {
+            &["Ctrl+Shift+Space", "Alt+Shift+Space", "Ctrl+Alt+Space"]
+        }
+    }
+
+    /// Standard per-user app data folder for SQLite, indexes, and settings (docs/10).
+    pub fn app_data_dir_for(&self, home: &Path, app_id: &str) -> PathBuf {
+        match self.os {
+            "macos" => home
+                .join("Library")
+                .join("Application Support")
+                .join(app_id),
+            "windows" => home.join("AppData").join("Roaming").join(app_id),
+            _ => home.join(".local").join("share").join(app_id),
+        }
+    }
+
+    /// Standard per-user diagnostics log directory (docs/10).
+    pub fn log_dir_for(&self, home: &Path, app_id: &str) -> PathBuf {
+        match self.os {
+            "macos" => home.join("Library").join("Logs").join(app_id),
+            "windows" => home.join("AppData").join("Local").join(app_id).join("logs"),
+            _ => home.join(".local").join("state").join(app_id).join("logs"),
         }
     }
 }
@@ -130,5 +169,45 @@ mod tests {
         };
         assert_eq!(win.default_widget_anchor(), WidgetAnchor::BottomRight);
         assert_eq!(mac.default_widget_anchor(), WidgetAnchor::TopCenter);
+        assert!(!win.is_macos());
+        assert!(mac.is_macos());
+    }
+
+    #[test]
+    fn hotkeys_and_directories_follow_platform() {
+        let win = PlatformInfo {
+            os: "windows",
+            arch: "x86_64",
+        };
+        let mac = PlatformInfo {
+            os: "macos",
+            arch: "aarch64",
+        };
+        let lin = PlatformInfo {
+            os: "linux",
+            arch: "x86_64",
+        };
+        assert_eq!(win.default_hotkey(), "Ctrl+Shift+Space");
+        assert_eq!(mac.default_hotkey(), "Cmd+Shift+Space");
+        assert!(mac.fallback_hotkeys().contains(&"Ctrl+Option+Space"));
+        assert!(win.fallback_hotkeys().contains(&"Alt+Shift+Space"));
+
+        let home = Path::new("/home/user");
+        assert_eq!(
+            mac.app_data_dir_for(home, "dev.tamgabul.app"),
+            home.join("Library/Application Support/dev.tamgabul.app")
+        );
+        assert_eq!(
+            mac.log_dir_for(home, "dev.tamgabul.app"),
+            home.join("Library/Logs/dev.tamgabul.app")
+        );
+        assert_eq!(
+            win.app_data_dir_for(home, "dev.tamgabul.app"),
+            home.join("AppData/Roaming/dev.tamgabul.app")
+        );
+        assert_eq!(
+            lin.app_data_dir_for(home, "dev.tamgabul.app"),
+            home.join(".local/share/dev.tamgabul.app")
+        );
     }
 }

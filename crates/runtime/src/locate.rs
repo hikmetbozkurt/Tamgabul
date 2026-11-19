@@ -19,6 +19,7 @@ pub enum Source {
     Env,
     Bundled,
     Path,
+    Homebrew,
     Winget,
 }
 
@@ -38,6 +39,21 @@ pub fn exe_name() -> &'static str {
 
 fn usable(p: &Path) -> bool {
     p.is_file()
+}
+
+/// Paths checked relative to the running app binary: adjacent directory,
+/// `llama/` subdirectory, and macOS `.app/Contents/Resources/{,llama/}`.
+pub fn bundled_candidates(exe_dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![
+        exe_dir.join(exe_name()),
+        exe_dir.join("llama").join(exe_name()),
+    ];
+    if let Some(contents) = exe_dir.parent() {
+        let resources = contents.join("Resources");
+        out.push(resources.join(exe_name()));
+        out.push(resources.join("llama").join(exe_name()));
+    }
+    out
 }
 
 pub fn find_llama_server(explicit: Option<&Path>) -> Result<Found, RuntimeError> {
@@ -64,13 +80,11 @@ pub fn find_llama_server(explicit: Option<&Path>) -> Result<Found, RuntimeError>
         .ok()
         .and_then(|e| e.parent().map(Path::to_path_buf))
     {
-        for p in [dir.join(exe_name()), dir.join("llama").join(exe_name())] {
-            if usable(&p) {
-                return Ok(Found {
-                    path: p,
-                    source: Source::Bundled,
-                });
-            }
+        if let Some(p) = bundled_candidates(&dir).into_iter().find(|p| usable(p)) {
+            return Ok(Found {
+                path: p,
+                source: Source::Bundled,
+            });
         }
     }
     if let Some(paths) = std::env::var_os("PATH") {
@@ -84,6 +98,12 @@ pub fn find_llama_server(explicit: Option<&Path>) -> Result<Found, RuntimeError>
             }
         }
     }
+    if let Some(p) = homebrew_candidates().into_iter().find(|p| usable(p)) {
+        return Ok(Found {
+            path: p,
+            source: Source::Homebrew,
+        });
+    }
     if let Some(p) = winget_candidates().into_iter().find(|p| usable(p)) {
         return Ok(Found {
             path: p,
@@ -93,8 +113,22 @@ pub fn find_llama_server(explicit: Option<&Path>) -> Result<Found, RuntimeError>
     Err(RuntimeError::RuntimeNotFound)
 }
 
+#[cfg(target_os = "macos")]
+fn homebrew_candidates() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/opt/homebrew/bin").join(exe_name()),
+        PathBuf::from("/usr/local/bin").join(exe_name()),
+    ]
+}
+
+#[cfg(not(target_os = "macos"))]
+fn homebrew_candidates() -> Vec<PathBuf> {
+    Vec::new()
+}
+
 /// winget puts a link in `%LOCALAPPDATA%\Microsoft\WinGet\Links` and the real
 /// files in `...\WinGet\Packages\ggml.llamacpp_<source>\`.
+#[cfg(windows)]
 fn winget_candidates() -> Vec<PathBuf> {
     let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
         return Vec::new();
@@ -114,6 +148,11 @@ fn winget_candidates() -> Vec<PathBuf> {
         v.extend(pkgs.into_iter().map(|p| p.join(exe_name())));
     }
     v
+}
+
+#[cfg(not(windows))]
+fn winget_candidates() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// `llama-server --version`, first line like `version: 6912 (a1b2c3d)`.
@@ -184,5 +223,16 @@ mod tests {
         let s = "ggml_cuda_init: found 1 CUDA devices\nversion: 6912 (a1b2c3d)\nbuilt with MSVC 19.4 for x64\n";
         assert_eq!(parse_version(s).as_deref(), Some("6912 (a1b2c3d)"));
         assert_eq!(parse_version("nothing"), None);
+    }
+
+    #[test]
+    fn bundled_candidates_cover_windows_and_macos_app_bundle() {
+        let exe_dir = Path::new("/Applications/Tamgabul.app/Contents/MacOS");
+        let cands = bundled_candidates(exe_dir);
+        assert!(cands.contains(&exe_dir.join(exe_name())));
+        assert!(cands.contains(&exe_dir.join("llama").join(exe_name())));
+        assert!(cands.contains(
+            &PathBuf::from("/Applications/Tamgabul.app/Contents/Resources/llama").join(exe_name())
+        ));
     }
 }
