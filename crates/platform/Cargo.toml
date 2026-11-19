@@ -26,3 +26,6 @@ windows = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_System_WinRT",
 ] }
+
+[target.'cfg(unix)'.dependencies]
+tempfile.workspace = true
