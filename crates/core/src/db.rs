@@ -37,6 +37,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "003_image_captions",
         sql: include_str!("../../../database/003_image_captions.sql"),
     },
+    Migration {
+        version: 4,
+        name: "004_audio_transcripts",
+        sql: include_str!("../../../database/004_audio_transcripts.sql"),
+    },
 ];
 
 fn db_err(e: impl std::fmt::Display) -> IpcError {
@@ -282,7 +287,7 @@ mod tests {
     fn fresh_db_migrates_to_latest_with_all_tables() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_and_migrate(&dir.path().join("t.db")).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 3);
+        assert_eq!(current_version(&conn).unwrap(), 4);
         let t = tables(&conn);
         for want in [
             "schema_migrations",
@@ -344,9 +349,9 @@ mod tests {
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 3);
+        assert_eq!(n, 4);
         // Nothing pending on the second open, so no backup is written.
-        assert!(!backup_path(&p, 3).exists());
+        assert!(!backup_path(&p, 4).exists());
     }
 
     #[test]
@@ -361,7 +366,7 @@ mod tests {
         }];
         let err = migrate(&mut conn, &bad).unwrap_err();
         assert_eq!(err.code, ErrorCode::DbMigrationFailed);
-        assert_eq!(current_version(&conn).unwrap(), 3);
+        assert_eq!(current_version(&conn).unwrap(), 4);
         assert!(
             !tables(&conn).iter().any(|t| t == "ok_t"),
             "partial migration leaked"
@@ -418,12 +423,26 @@ mod tests {
         )
         .unwrap();
         migrate(&mut conn, MIGRATIONS).unwrap();
-        assert_eq!(current_version(&conn).unwrap(), 3);
+        assert_eq!(current_version(&conn).unwrap(), 4);
         conn.execute(
             "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text) VALUES ('d','g',2,'caption','Pasaport sayfası')",
             [],
         )
         .expect("caption chunks are allowed from v3");
+        conn.execute(
+            "INSERT INTO chunks(document_id, generation_id, ordinal, modality, text, time_start_ms, time_end_ms)
+             VALUES ('d','g',3,'transcript','Merhaba ses kaydı',0,15000)",
+            [],
+        )
+        .expect("transcript chunks are allowed from v4");
+        let tr_hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunk_fts WHERE chunk_fts MATCH 'merhaba'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tr_hit, 1);
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM embedding_records", [], |r| r.get(0))
             .unwrap();

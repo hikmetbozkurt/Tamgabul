@@ -11,7 +11,7 @@ use tamgabul_core::db::open_and_migrate;
 use tamgabul_core::describe::{Describer, NoDescriber};
 use tamgabul_core::dto::RevokeMode;
 use tamgabul_core::error::IpcError;
-use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome};
+use tamgabul_core::index::job::{self, Embedder, JobInput, Outcome, Transcriber};
 use tamgabul_core::index::media::{NoPlatform, Platform};
 use tamgabul_core::index::store::{self, GenerationSpec, Scope, ScopeState};
 use tamgabul_core::index::walk::{self, Limits};
@@ -1565,4 +1565,223 @@ fn a_filter_that_hides_everything_is_relaxed_and_said_so() {
     let out = ask(&e, &none, "budget pdf", None);
     assert_eq!(out.found[0].resolved.card.title, "report.pdf");
     assert!(out.notice.is_none());
+}
+
+struct FakeTranscriber {
+    fail: bool,
+    calls: usize,
+}
+
+impl Transcriber for FakeTranscriber {
+    fn available(&mut self) -> bool {
+        true
+    }
+    fn transcribe_wav(&mut self, _wav: &[u8]) -> Result<Option<String>, IpcError> {
+        self.calls += 1;
+        if self.fail {
+            return Err(IpcError::new(
+                tamgabul_core::error::ErrorCode::RuntimeLoadFailed,
+                "whisper down",
+            ));
+        }
+        Ok(Some(
+            "Quarterly planning call: release deadline moves to Thursday".into(),
+        ))
+    }
+}
+
+#[test]
+fn audio_file_transcript_is_indexed_and_searchable_even_when_stt_later_fails() {
+    let mut e = env();
+    let dir = e.files.path().join("voice");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("meeting.wav"), wav_tone(2)).unwrap();
+    let s = grant(&e, "voice");
+    let mut emb = FakeEmbedder::new();
+    let mut tr = FakeTranscriber {
+        fail: false,
+        calls: 0,
+    };
+    let g = e.generation.clone();
+    let (outcome, p) = job::run_with_transcriber(
+        &mut e.conn,
+        JobInput {
+            scope_id: &s.scope_id,
+            generation: &g,
+            deny: &[],
+            limits: Limits::default(),
+            batch: 8,
+            platform: &NoPlatform,
+        },
+        &mut emb,
+        &mut NoDescriber,
+        &mut tr,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(outcome, Outcome::Done);
+    assert_eq!(p.indexed, 1);
+    assert_eq!(tr.calls, 1);
+
+    let hits = search::search(&e.conn, Some(&g), None, "Thursday", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].reason, tamgabul_core::search::Reason::Transcript);
+    assert_eq!(title_of(&e.conn, &hits[0].document_id), "meeting.wav");
+
+    // Verify failure drops out gracefully while preserving audio embedding.
+    std::fs::write(dir.join("backup.wav"), wav_tone(3)).unwrap();
+    let mut failing_tr = FakeTranscriber {
+        fail: true,
+        calls: 0,
+    };
+    let (outcome2, p2) = job::run_with_transcriber(
+        &mut e.conn,
+        JobInput {
+            scope_id: &s.scope_id,
+            generation: &g,
+            deny: &[],
+            limits: Limits::default(),
+            batch: 8,
+            platform: &NoPlatform,
+        },
+        &mut emb,
+        &mut NoDescriber,
+        &mut failing_tr,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(outcome2, Outcome::Done);
+    assert_eq!(p2.indexed, 1);
+    assert_eq!(failing_tr.calls, 1);
+}
+
+struct VersionedEmbedder {
+    version: f32,
+}
+
+impl Embedder for VersionedEmbedder {
+    fn embed_documents(
+        &mut self,
+        _title: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, IpcError> {
+        Ok(texts
+            .iter()
+            .map(|t| {
+                let mut v = vec_for(t.as_bytes());
+                v[0] += self.version;
+                v
+            })
+            .collect())
+    }
+    fn supports_vision(&mut self) -> bool {
+        false
+    }
+    fn supports_audio(&mut self) -> bool {
+        false
+    }
+    fn embed_media(&mut self, _: &[u8]) -> Result<Vec<f32>, IpcError> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn generation_migration_and_rollback_preserve_vectors_without_mixing() {
+    let mut e = env();
+    let dir = e.files.path().join("gen_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("roadmap.md"), b"Initial roadmap alpha milestone").unwrap();
+    let s = grant(&e, "gen_test");
+
+    // 1. Index under Gen 1.
+    let gen1_spec = spec("hash-v1");
+    let gen1 = store::ensure_current_generation(&mut e.conn, &gen1_spec).unwrap();
+    let mut emb1 = VersionedEmbedder { version: 1.0 };
+    job::run(
+        &mut e.conn,
+        JobInput {
+            scope_id: &s.scope_id,
+            generation: &gen1,
+            deny: &[],
+            limits: Limits::default(),
+            batch: 8,
+            platform: &NoPlatform,
+        },
+        &mut emb1,
+        &mut NoDescriber,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+
+    // 2. Migrate to Gen 2 (e.g. adapted/LoRA model). Gen 1 must retire and never leak.
+    let gen2_spec = spec("hash-v2");
+    let gen2 = store::ensure_current_generation(&mut e.conn, &gen2_spec).unwrap();
+    assert_ne!(gen1, gen2);
+    let g1_state: String = e
+        .conn
+        .query_row(
+            "SELECT state FROM index_generations WHERE generation_id = ?1",
+            [&gen1],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(g1_state, "RETIRED");
+    // Before indexing Gen 2, searching Gen 2 finds 0 vectors / 0 FTS hits in Gen 2.
+    assert!(search::search(&e.conn, Some(&gen2), None, "milestone", 10)
+        .unwrap()
+        .is_empty());
+
+    // Update content and index Gen 2.
+    std::fs::write(dir.join("roadmap.md"), b"Second roadmap beta milestone").unwrap();
+    let mut emb2 = VersionedEmbedder { version: 2.0 };
+    job::run(
+        &mut e.conn,
+        JobInput {
+            scope_id: &s.scope_id,
+            generation: &gen2,
+            deny: &[],
+            limits: Limits::default(),
+            batch: 8,
+            platform: &NoPlatform,
+        },
+        &mut emb2,
+        &mut NoDescriber,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(
+        search::search(&e.conn, Some(&gen2), None, "beta", 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(search::search(&e.conn, Some(&gen2), None, "alpha", 10)
+        .unwrap()
+        .is_empty());
+
+    // 3. Roll back to Gen 1: Gen 2 retires, Gen 1 becomes CURRENT and its
+    // preserved chunks & vectors are searchable immediately without re-indexing.
+    let restored = store::ensure_current_generation(&mut e.conn, &gen1_spec).unwrap();
+    assert_eq!(restored, gen1);
+    let g2_state: String = e
+        .conn
+        .query_row(
+            "SELECT state FROM index_generations WHERE generation_id = ?1",
+            [&gen2],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(g2_state, "RETIRED");
+    let q1 = emb1
+        .embed_documents("q", &["Initial roadmap alpha milestone".into()])
+        .unwrap();
+    let hits = search::search(&e.conn, Some(&restored), Some(&q1[0]), "alpha", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(search::search(&e.conn, Some(&restored), None, "beta", 10)
+        .unwrap()
+        .is_empty());
 }

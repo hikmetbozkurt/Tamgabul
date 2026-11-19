@@ -40,6 +40,8 @@ pub enum Reason {
     Filter,
     /// Words found in the image description written at scan time.
     Caption,
+    /// Spoken words transcribed from audio/video by local STT.
+    Transcript,
     /// Shown in an earlier search (found from search history).
     Previous,
 }
@@ -55,6 +57,7 @@ impl Reason {
             Reason::Ocr => "ocr",
             Reason::Filter => "filter",
             Reason::Caption => "caption",
+            Reason::Transcript => "transcript",
             Reason::Previous => "previous_result",
         }
     }
@@ -255,6 +258,7 @@ fn keyword_candidates(
             let reason = match m.as_str() {
                 "ocr" => Reason::Ocr,
                 "caption" => Reason::Caption,
+                "transcript" => Reason::Transcript,
                 _ => Reason::Keyword,
             };
             Ok((r.get(0)?, r.get(1)?, reason))
@@ -418,7 +422,7 @@ pub fn search_terms(
         // Exact words explain a hit better than "meaning".
         if matches!(
             reason,
-            Reason::Keyword | Reason::Filename | Reason::Ocr | Reason::Caption
+            Reason::Keyword | Reason::Filename | Reason::Ocr | Reason::Caption | Reason::Transcript
         ) {
             e.1 = reason;
         }

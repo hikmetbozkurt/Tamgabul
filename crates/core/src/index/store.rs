@@ -964,8 +964,11 @@ pub fn commit_document(
     }
     let id = doc_id_for(&tx, m.path)?;
     upsert_doc(&tx, &id, m, "PARSED", None)?;
-    tx.execute("DELETE FROM chunks WHERE document_id = ?1", [&id])
-        .map_err(err)?;
+    tx.execute(
+        "DELETE FROM chunks WHERE document_id = ?1 AND generation_id = ?2",
+        params![&id, generation],
+    )
+    .map_err(err)?;
     {
         let mut ins = tx
             .prepare(

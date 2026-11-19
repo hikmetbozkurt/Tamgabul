@@ -40,6 +40,26 @@ pub trait Embedder {
     fn embed_media(&mut self, bytes: &[u8]) -> Result<Vec<f32>, IpcError>;
 }
 
+/// Optional local speech-to-text transcriber for spoken audio segments (P6).
+pub trait Transcriber {
+    /// `false` when no STT model is registered.
+    fn available(&mut self) -> bool;
+    /// 16 kHz mono WAV segment -> spoken text, or `Ok(None)` when silent.
+    fn transcribe_wav(&mut self, wav: &[u8]) -> Result<Option<String>, IpcError>;
+}
+
+/// No STT model: audio recordings keep audio embeddings only.
+pub struct NoTranscriber;
+
+impl Transcriber for NoTranscriber {
+    fn available(&mut self) -> bool {
+        false
+    }
+    fn transcribe_wav(&mut self, _wav: &[u8]) -> Result<Option<String>, IpcError> {
+        Ok(None)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Progress {
     pub processed: u32,
@@ -95,6 +115,8 @@ pub enum TextSource {
     Ocr,
     /// Description written by the vision LLM.
     Caption,
+    /// Spoken text transcribed by local STT.
+    Transcript,
 }
 
 impl TextSource {
@@ -103,6 +125,7 @@ impl TextSource {
             TextSource::File => "text",
             TextSource::Ocr => "ocr",
             TextSource::Caption => "caption",
+            TextSource::Transcript => "transcript",
         }
     }
 }
@@ -113,6 +136,7 @@ pub enum Piece {
     Text {
         chunk: text::Chunk,
         page: Option<u32>,
+        time_ms: Option<(u64, u64)>,
         source: TextSource,
     },
     Media {
@@ -132,6 +156,16 @@ fn letters(s: &str) -> usize {
 }
 
 fn push_text(out: &mut Vec<Piece>, body: &str, page: Option<u32>, source: TextSource) {
+    push_text_timed(out, body, page, None, source);
+}
+
+fn push_text_timed(
+    out: &mut Vec<Piece>,
+    body: &str,
+    page: Option<u32>,
+    time_ms: Option<(u64, u64)>,
+    source: TextSource,
+) {
     for chunk in text::chunk(body) {
         if out.len() >= text::MAX_CHUNKS_PER_DOC {
             return;
@@ -139,6 +173,7 @@ fn push_text(out: &mut Vec<Piece>, body: &str, page: Option<u32>, source: TextSo
         out.push(Piece::Text {
             chunk,
             page,
+            time_ms,
             source,
         });
     }
@@ -212,6 +247,29 @@ impl Describer for ScanDescriber<'_> {
     }
 }
 
+struct ScanTranscriber<'a> {
+    inner: &'a mut dyn Transcriber,
+    failed: bool,
+}
+
+impl Transcriber for ScanTranscriber<'_> {
+    fn available(&mut self) -> bool {
+        !self.failed && self.inner.available()
+    }
+    fn transcribe_wav(&mut self, wav: &[u8]) -> Result<Option<String>, IpcError> {
+        if self.failed {
+            return Ok(None);
+        }
+        match self.inner.transcribe_wav(wav) {
+            Ok(t) => Ok(t),
+            Err(_) => {
+                self.failed = true;
+                Ok(None)
+            }
+        }
+    }
+}
+
 /// Caption (optional LLM), OCR text and the image vector of one picture.
 fn image_pieces(
     out: &mut Vec<Piece>,
@@ -237,18 +295,43 @@ fn image_pieces(
     }
 }
 
-fn audio_pieces(out: &mut Vec<Piece>, samples: &[f32]) {
+fn audio_pieces(
+    out: &mut Vec<Piece>,
+    samples: &[f32],
+    embed_audio: bool,
+    transcriber: &mut dyn Transcriber,
+    cancel: &AtomicBool,
+) {
+    let want_transcript = transcriber.available();
+    if !embed_audio && !want_transcript {
+        return;
+    }
     for seg in media::audio_segments(samples) {
-        out.push(Piece::Media {
-            modality: "audio",
-            bytes: seg.wav,
-            time_ms: Some((seg.start_ms, seg.end_ms)),
-        });
+        if want_transcript && !cancel.load(Ordering::Relaxed) {
+            if let Ok(Some(spoken)) = transcriber.transcribe_wav(&seg.wav) {
+                let spoken = spoken.trim();
+                if !spoken.is_empty() {
+                    push_text_timed(
+                        out,
+                        spoken,
+                        None,
+                        Some((seg.start_ms, seg.end_ms)),
+                        TextSource::Transcript,
+                    );
+                }
+            }
+        }
+        if embed_audio {
+            out.push(Piece::Media {
+                modality: "audio",
+                bytes: seg.wav,
+                time_ms: Some((seg.start_ms, seg.end_ms)),
+            });
+        }
     }
 }
 
 /// Parse one file into pieces. `Err(reason)` = skip the file (recorded).
-// One call per file with the job's services; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn extract_pieces(
     kind: SourceKind,
@@ -258,6 +341,31 @@ pub fn extract_pieces(
     platform: &dyn Platform,
     embedder: &mut dyn Embedder,
     describer: &mut dyn Describer,
+    cancel: &AtomicBool,
+) -> Result<Vec<Piece>, &'static str> {
+    extract_pieces_with_transcriber(
+        kind,
+        path,
+        bytes,
+        ext,
+        platform,
+        embedder,
+        describer,
+        &mut NoTranscriber,
+        cancel,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn extract_pieces_with_transcriber(
+    kind: SourceKind,
+    path: &Path,
+    bytes: Vec<u8>,
+    ext: Option<&str>,
+    platform: &dyn Platform,
+    embedder: &mut dyn Embedder,
+    describer: &mut dyn Describer,
+    transcriber: &mut dyn Transcriber,
     cancel: &AtomicBool,
 ) -> Result<Vec<Piece>, &'static str> {
     let mut out = Vec::new();
@@ -357,9 +465,10 @@ pub fn extract_pieces(
                     image_pieces(&mut out, img, platform, embedder, describer, cancel);
                 }
             }
-            if embedder.supports_audio() && !cancel.load(Ordering::Relaxed) {
+            let embed_audio = embedder.supports_audio();
+            if (embed_audio || transcriber.available()) && !cancel.load(Ordering::Relaxed) {
                 if let Ok(samples) = media::decode_audio_file(path, ext) {
-                    audio_pieces(&mut out, &samples);
+                    audio_pieces(&mut out, &samples, embed_audio, transcriber, cancel);
                 }
             }
             if out.is_empty() {
@@ -367,11 +476,12 @@ pub fn extract_pieces(
             }
         }
         SourceKind::Audio => {
-            if !embedder.supports_audio() {
+            let embed_audio = embedder.supports_audio();
+            if !embed_audio && !transcriber.available() {
                 return Err("no_audio_encoder");
             }
             let samples = media::decode_audio(bytes, ext).map_err(|e| e.code())?;
-            audio_pieces(&mut out, &samples);
+            audio_pieces(&mut out, &samples, embed_audio, transcriber, cancel);
             if out.is_empty() {
                 return Err("silent");
             }
@@ -389,16 +499,18 @@ pub fn embed_pieces(
     batch: usize,
     cancel: &AtomicBool,
 ) -> Result<Option<Vec<NewChunk>>, IpcError> {
+    type TextPiece = (text::Chunk, Option<u32>, Option<(u64, u64)>, TextSource);
     let mut out: Vec<NewChunk> = Vec::with_capacity(pieces.len());
-    let mut texts: Vec<(text::Chunk, Option<u32>, TextSource)> = Vec::new();
+    let mut texts: Vec<TextPiece> = Vec::new();
     let mut media_pieces = Vec::new();
     for p in pieces {
         match p {
             Piece::Text {
                 chunk,
                 page,
+                time_ms,
                 source,
-            } => texts.push((chunk, page, source)),
+            } => texts.push((chunk, page, time_ms, source)),
             m => media_pieces.push(m),
         }
     }
@@ -406,7 +518,7 @@ pub fn embed_pieces(
         if cancel.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let inputs: Vec<String> = group.iter().map(|(c, _, _)| c.text.clone()).collect();
+        let inputs: Vec<String> = group.iter().map(|(c, _, _, _)| c.text.clone()).collect();
         let vecs = embedder.embed_documents(title, &inputs)?;
         if vecs.len() != group.len() {
             return Err(IpcError::new(
@@ -414,7 +526,7 @@ pub fn embed_pieces(
                 "embedding count mismatch",
             ));
         }
-        for ((c, page, source), v) in group.iter().zip(vecs) {
+        for ((c, page, time_ms, source), v) in group.iter().zip(vecs) {
             let lines = *source == TextSource::File;
             out.push(NewChunk {
                 ordinal: out.len() as u32,
@@ -423,7 +535,7 @@ pub fn embed_pieces(
                 page: *page,
                 line_start: lines.then_some(c.line_start),
                 line_end: lines.then_some(c.line_end),
-                time_ms: None,
+                time_ms: *time_ms,
                 vector: v,
             });
         }
@@ -468,8 +580,32 @@ pub fn run(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<(Outcome, Progress), IpcError> {
+    run_with_transcriber(
+        conn,
+        input,
+        embedder,
+        describer,
+        &mut NoTranscriber,
+        cancel,
+        progress,
+    )
+}
+
+pub fn run_with_transcriber(
+    conn: &mut Connection,
+    input: JobInput<'_>,
+    embedder: &mut dyn Embedder,
+    describer: &mut dyn Describer,
+    transcriber: &mut dyn Transcriber,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<(Outcome, Progress), IpcError> {
     let mut describer = ScanDescriber {
         inner: describer,
+        failed: false,
+    };
+    let mut transcriber = ScanTranscriber {
+        inner: transcriber,
         failed: false,
     };
     let scope = store::get_scope(conn, input.scope_id)?
@@ -589,7 +725,7 @@ pub fn run(
                 .path
                 .extension()
                 .map(|e| e.to_string_lossy().to_ascii_lowercase());
-            let pieces = match extract_pieces(
+            let pieces = match extract_pieces_with_transcriber(
                 c.kind,
                 &c.path,
                 bytes,
@@ -597,6 +733,7 @@ pub fn run(
                 input.platform,
                 embedder,
                 &mut describer,
+                &mut transcriber,
                 cancel,
             ) {
                 Ok(p) => p,

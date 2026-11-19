@@ -348,6 +348,28 @@ ts_export! {
     }
 }
 
+// ---------------------------------------------------------------- voice (STT / TTS)
+
+ts_export! {
+    pub struct TranscribeRequest {
+        pub wav_base64: String,
+        pub language: Option<String>,
+    }
+
+    pub struct TranscribeResponse {
+        pub text: String,
+    }
+
+    pub struct SynthesizeRequest {
+        pub text: String,
+    }
+
+    pub struct SynthesizeResponse {
+        pub wav_base64: String,
+        pub sample_rate: u32,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
