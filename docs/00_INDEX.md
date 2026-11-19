@@ -28,5 +28,8 @@
 | 22 | [Platform matrix](docs/22_CROSS_PLATFORM_MATRIX.md) | Compatibility test matrix |
 | 23 | [Agent handoff](docs/23_AGENT_HANDOFF.md) | Parallel engineering workflow |
 | 24 | [UI/UX plan](docs/24_UI_UX_PLAN.md) | Tasarım tuvali, tokenlar, bileşenler, U0–U9 fazları |
+| Help (EN) | [Help](docs/HELP.md) | Offline end-user guide (English) |
+| Help (TR) | [Yardım](docs/HELP.tr.md) | Çevrimdışı son kullanıcı rehberi (Türkçe) |
+| Packaging | [Packaging](packaging/README.md) | Installer, runtime staging, and release checklists |
 
 `database/001_initial.sql`: proposed schema, reviewed with SQLite syntax smoke test. `examples/`: config, model manifest, intent schema, evaluation fixture. `agent_tasks/`: first concrete agent tickets. `templates/`: reusable task, ADR and experiment reports. `ai_lab/`: future training protocol. All thresholds initially **targets to validate**, not observed measurements.

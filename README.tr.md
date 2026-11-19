@@ -16,6 +16,7 @@
   <img alt="Platform: Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1F2533">
   <img alt="Durum: pre-alpha" src="https://img.shields.io/badge/durum-pre--alpha-4F6FD8">
   <img alt="Çevrimdışı çalışır" src="https://img.shields.io/badge/%C3%A7al%C4%B1%C5%9F%C4%B1r-%C3%A7evrimd%C4%B1%C5%9F%C4%B1-2EAA4F">
+  <a href="LICENSE"><img alt="Lisans: Apache-2.0" src="https://img.shields.io/badge/lisans-Apache--2.0-4F6FD8"></a>
 </p>
 
 <p align="center">
@@ -215,7 +216,7 @@ cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\mo
 cargo run -p tamgabul-runtime --release --example llm_spike -- --model  C:\AI\models\gemma-4-e2b-it
 ```
 
-Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md) dosyasında. Mühendislik kararları [`docs/20_ADR.md`](docs/20_ADR.md), belge dizini [`docs/00_INDEX.md`](docs/00_INDEX.md) içinde. Başlangıç rehberi: [`START_HERE_TR.md`](START_HERE_TR.md).
+Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md), son kullanıcı yardımı [`docs/HELP.tr.md`](docs/HELP.tr.md) ve paketleme kontrol listeleri [`packaging/README.md`](packaging/README.md) dosyasında. Mühendislik kararları [`docs/20_ADR.md`](docs/20_ADR.md), belge dizini [`docs/00_INDEX.md`](docs/00_INDEX.md) içinde. Başlangıç rehberi: [`START_HERE_TR.md`](START_HERE_TR.md).
 
 ## Durum ve sınırlar
 
@@ -251,7 +252,7 @@ Tam plan: [`docs/15_ROADMAP.md`](docs/15_ROADMAP.md).
 
 ## Lisans
 
-Henüz bir lisans seçilmedi. Bir `LICENSE` dosyası eklenene kadar tüm hakları yazara aittir. Modellerin ve çalıştırıcının kendi lisansları var: yukarıdaki GGUF dosyaları Hugging Face'te Apache-2.0 olarak işaretli (her model kartını kontrol et), `llama.cpp` MIT lisanslı.
+Tamgabul, **Apache License, Version 2.0** lisansı altındadır ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). Üçüncü taraf yazılım ve model lisans katmanları [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) dosyasında listelenir. Modellerin ve çalıştırıcının kendi lisansları var: yukarıdaki GGUF dosyaları Hugging Face'te Apache-2.0 olarak işaretli (her model kartını kontrol et), `llama.cpp` MIT lisanslı.
 
 ## Teşekkürler
 

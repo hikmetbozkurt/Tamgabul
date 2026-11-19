@@ -3,6 +3,8 @@
 // (cargo metadata, node_modules/*/package.json) and the GGUF headers.
 // The complete dependency list is in Cargo.lock and package-lock.json.
 
+export const APP_LICENSE = "Apache-2.0";
+
 export type LicenseItem = { name: string; license: string; url: string; kind: "model" | "runtime" | "library" };
 
 export const LICENSES: LicenseItem[] = [
@@ -24,5 +26,6 @@ export const LICENSES: LicenseItem[] = [
   { name: "unicode-normalization", license: "(MIT OR Apache-2.0) AND Unicode-3.0", url: "https://github.com/unicode-rs/unicode-normalization", kind: "library" },
   { name: "windows-rs", license: "MIT OR Apache-2.0", url: "https://github.com/microsoft/windows-rs", kind: "library" },
   { name: "ureq, serde, sha2, base64, getrandom, win32job, ts-rs, thiserror", license: "MIT OR Apache-2.0 (ts-rs: MIT)", url: "https://crates.io/", kind: "library" },
+  { name: "rustls, ring, rustls-webpki, webpki-roots", license: "Apache-2.0 / MIT / ISC / CDLA-Permissive-2.0", url: "https://crates.io/crates/rustls", kind: "library" },
   { name: "Inter (font)", license: "OFL-1.1", url: "https://rsms.me/inter/", kind: "library" },
 ];

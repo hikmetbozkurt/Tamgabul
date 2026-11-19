@@ -16,6 +16,7 @@
   <img alt="Platform: Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1F2533">
   <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-4F6FD8">
   <img alt="Runs offline" src="https://img.shields.io/badge/runs-offline-2EAA4F">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-4F6FD8"></a>
 </p>
 
 <p align="center">
@@ -215,7 +216,7 @@ cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\mo
 cargo run -p tamgabul-runtime --release --example llm_spike -- --model  C:\AI\models\gemma-4-e2b-it
 ```
 
-More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish). Engineering decisions are in [`docs/20_ADR.md`](docs/20_ADR.md), and the spec index is in [`docs/00_INDEX.md`](docs/00_INDEX.md).
+More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish), end-user help in [`docs/HELP.md`](docs/HELP.md), and packaging checklists in [`packaging/README.md`](packaging/README.md). Engineering decisions are in [`docs/20_ADR.md`](docs/20_ADR.md), and the spec index is in [`docs/00_INDEX.md`](docs/00_INDEX.md).
 
 ## Status and limitations
 
@@ -251,7 +252,7 @@ The full plan is in [`docs/15_ROADMAP.md`](docs/15_ROADMAP.md).
 
 ## License
 
-No license has been chosen yet. Until a `LICENSE` file is added, all rights are reserved by the author. The models and the runtime have their own licenses: the GGUF files listed above are marked Apache-2.0 on Hugging Face (check each model card), and `llama.cpp` is MIT.
+Tamgabul is licensed under the **Apache License, Version 2.0** ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). Third-party software and model license layers are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The models and runtime have their own licenses: the GGUF files listed above are marked Apache-2.0 on Hugging Face (check each model card), and `llama.cpp` is MIT.
 
 ## Acknowledgements
 
