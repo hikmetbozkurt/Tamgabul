@@ -42,3 +42,13 @@ Thumbs.db
 
 # Tauri generated schemas
 apps/desktop/src-tauri/gen/
+
+# Internal planning docs (kept locally, not published)
+/AGENTS.md
+/START_HERE_TR.md
+/agent_tasks/
+/templates/
+/docs/*
+!/docs/HELP.md
+!/docs/HELP.tr.md
+!/docs/assets/

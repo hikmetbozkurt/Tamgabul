@@ -55,6 +55,7 @@
 | **Cited summaries** | With the LLM, a short summary of the picked files where every fact links to the file it came from; “summarize …” requests get a longer one. |
 | **Conversation memory** | Sessions, requests and shown results are kept in local SQLite. Results are stored as references and re-checked on every read, so a revoked folder disappears from old conversations too. History can be turned off. |
 | **Tray widget** | Lives in the system tray. `Ctrl + Shift + Space` opens a compact widget, which expands to the full app. Closing hides to the tray; *Quit* stops every model worker. |
+| **Voice (optional)** | With a local `whisper-server` and a Whisper model you can speak a request, and spoken words inside audio files become searchable. With `piper` and a Piper voice, answers can be read aloud. Typing always works without them. |
 | **Two languages** | English and Turkish UI. |
 
 > [!NOTE]
@@ -192,11 +193,13 @@ apps/desktop/
 crates/
   core/                SQLite schema, indexing pipeline, search, request understanding,
                        image descriptions, result pick, history, model registry
-  platform/            OS services: Windows OCR, WIC image decoding, PDF page rendering
-  runtime/             llama-server workers, GGUF probing, model manager, smoke tests, spikes
+  platform/            OS services: OCR, image decoding, PDF page rendering (Windows, macOS, Linux)
+  runtime/             llama-server / whisper-server / piper workers, model probing, model manager
 database/              SQL migrations (embedded into the core crate)
-docs/                  product and engineering specs, ADRs, research log
-agent_tasks/           phase tasks with acceptance criteria
+docs/                  end-user help (HELP.md, HELP.tr.md) and README images
+examples/              config samples and the bilingual evaluation set
+packaging/             installer and runtime staging scripts
+ai_lab/                offline LoRA experiment tools (post-MVP)
 ```
 
 ## Development
@@ -216,15 +219,15 @@ cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\mo
 cargo run -p tamgabul-runtime --release --example llm_spike -- --model  C:\AI\models\gemma-4-e2b-it
 ```
 
-More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish), end-user help in [`docs/HELP.md`](docs/HELP.md), and packaging checklists in [`packaging/README.md`](packaging/README.md). Engineering decisions are in [`docs/20_ADR.md`](docs/20_ADR.md), and the spec index is in [`docs/00_INDEX.md`](docs/00_INDEX.md).
+More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish), end-user help in [`docs/HELP.md`](docs/HELP.md), and packaging checklists in [`packaging/README.md`](packaging/README.md).
 
 ## Status and limitations
 
-- **Pre-alpha.** It is built and tested on Windows. macOS is planned (same codebase), and Linux has no OS services (OCR, extra codecs, PDF rendering) yet.
-- **No installer.** `llama-server` comes from winget, and models are added by hand.
+- **Pre-alpha.** It is built and tested on Windows. macOS code paths (Vision OCR, PDFKit, Metal) and a CI build are in place, but it has not been tested on a Mac yet. On Linux, OCR, PDF pages and extra media use optional system tools (`tesseract`, `poppler`, `ffmpeg`) when they are installed.
+- **No signed installer yet.** NSIS/MSI build settings exist (see [`packaging/README.md`](packaging/README.md)), but release builds are not tested or signed. `llama-server` comes from winget, and models are added by hand.
 - **No numbers yet.** Load time, memory, scan speed and search quality have not been benchmarked on a real machine. A bilingual evaluation set and runner are in [`examples/eval/`](examples/eval/README.md). The first scan with image descriptions is noticeably slower, because the LLM looks at every image once.
-- **Audio** is found by the meaning of the sound and by file name. There is no speech-to-text yet.
-- **Voice input/output (STT/TTS)** is not implemented.
+- **Audio** is found by the meaning of the sound and by file name. With a Whisper model, spoken words are also transcribed locally and become searchable.
+- **Voice input/output (STT/TTS)** works with optional local `whisper-server` and `piper`. A full Turkish/English voice round trip has not been checked on real hardware yet.
 - **Folder watching** rescans a folder about 10 seconds after changes stop (only changed files are processed). A moved or renamed folder can be **relinked** to its new place without re-indexing.
 
 ## Roadmap
@@ -234,14 +237,12 @@ More details are in [`DEVELOPMENT.md`](DEVELOPMENT.md) (in Turkish), end-user he
 | P0 | Repo, CI, UI shell, runtime spikes | done |
 | P1 | Folder grants, safe scan, all formats, OCR, revoke + purge | done |
 | P2 | Hybrid retrieval, result cards, open / reveal / preview | done |
-| P3 | History, request understanding, LLM pick, image descriptions | in progress |
-| P4 | Model registry, validation, on-demand load, idle unload | done (embedding + LLM) |
-| P5 | Tray widget, hotkey, onboarding | done, polishing |
-| P6 | Voice (STT / TTS), packaging | planned |
+| P3 | History, request understanding, LLM pick, image descriptions, cited summaries | done, real-machine check pending |
+| P4 | Model registry, validation, on-demand load, idle unload | done (embedding, LLM, STT, TTS) |
+| P5 | Tray widget, hotkey, onboarding | done |
+| P6 | Voice (STT / TTS), packaging | code done, real-machine check pending |
 | P7 | Windows release gate: installer, security and evaluation matrix | planned |
-| P8 | macOS parity | planned |
-
-The full plan is in [`docs/15_ROADMAP.md`](docs/15_ROADMAP.md).
+| P8 | macOS parity | in progress (code + CI build, not tested on a Mac) |
 
 ## Privacy
 

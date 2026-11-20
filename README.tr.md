@@ -55,6 +55,7 @@
 | **Kaynaklı özetler** | LLM ile seçilen dosyaların kısa özeti; her bilgi geldiği dosyaya bağlanır. “… özetle” isteklerinde daha uzun özet yazılır. |
 | **Konuşma hafızası** | Oturumlar, istekler ve gösterilen sonuçlar yerel SQLite'ta tutulur. Sonuçlar referans olarak saklanır ve her okumada yeniden kontrol edilir; izni kaldırılan bir klasör eski konuşmalardan da kaybolur. Geçmiş kapatılabilir. |
 | **Tepsi widget'ı** | Sistem tepsisinde yaşar. `Ctrl + Shift + Space` küçük widget'ı açar, widget tam uygulamaya genişler. Kapatınca tepsiye gizlenir; *Quit* tüm model süreçlerini kapatır. |
+| **Ses (isteğe bağlı)** | Yerel `whisper-server` ve bir Whisper modeliyle isteğini sesle söyleyebilirsin; ses dosyalarındaki konuşmalar da aranabilir olur. `piper` ve bir Piper sesiyle cevaplar sesli okunur. Bunlar olmadan yazarak arama her zaman çalışır. |
 | **İki dil** | İngilizce ve Türkçe arayüz. |
 
 > [!NOTE]
@@ -192,11 +193,13 @@ apps/desktop/
 crates/
   core/                SQLite şeması, indeksleme, arama, istek anlama, görsel açıklamaları,
                        sonuç seçimi, geçmiş, model kaydı
-  platform/            İşletim sistemi servisleri: Windows OCR, WIC görsel çözümleme, PDF sayfa çizimi
-  runtime/             llama-server süreçleri, GGUF kontrolü, model yöneticisi, deneme testleri, spike'lar
+  platform/            İşletim sistemi servisleri: OCR, görsel çözümleme, PDF sayfa çizimi (Windows, macOS, Linux)
+  runtime/             llama-server / whisper-server / piper süreçleri, model kontrolü, model yöneticisi
 database/              SQL migration'ları (core'a gömülür)
-docs/                  ürün ve mühendislik belgeleri, ADR'ler, araştırma kaydı
-agent_tasks/           kabul kriterli faz görevleri
+docs/                  kullanıcı yardımı (HELP.md, HELP.tr.md) ve README görselleri
+examples/              ayar örnekleri ve iki dilli değerlendirme seti
+packaging/             kurulum dosyası ve runtime hazırlama betikleri
+ai_lab/                çevrimdışı LoRA deney araçları (MVP sonrası)
 ```
 
 ## Geliştirme
@@ -216,15 +219,15 @@ cargo run -p tamgabul-runtime --release --example eg2_spike -- --models C:\AI\mo
 cargo run -p tamgabul-runtime --release --example llm_spike -- --model  C:\AI\models\gemma-4-e2b-it
 ```
 
-Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md), son kullanıcı yardımı [`docs/HELP.tr.md`](docs/HELP.tr.md) ve paketleme kontrol listeleri [`packaging/README.md`](packaging/README.md) dosyasında. Mühendislik kararları [`docs/20_ADR.md`](docs/20_ADR.md), belge dizini [`docs/00_INDEX.md`](docs/00_INDEX.md) içinde. Başlangıç rehberi: [`START_HERE_TR.md`](START_HERE_TR.md).
+Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md), son kullanıcı yardımı [`docs/HELP.tr.md`](docs/HELP.tr.md) ve paketleme kontrol listeleri [`packaging/README.md`](packaging/README.md) dosyasında.
 
 ## Durum ve sınırlar
 
-- **Pre-alpha.** Windows'ta derlenip test ediliyor. macOS planlı (aynı kod tabanı); Linux'ta henüz işletim sistemi servisleri (OCR, ek kodekler, PDF çizimi) yok.
-- **Kurulum dosyası yok.** `llama-server` winget'ten gelir, modeller elle eklenir.
+- **Pre-alpha.** Windows'ta derlenip test ediliyor. macOS kod yolları (Vision OCR, PDFKit, Metal) ve CI derlemesi hazır, ama henüz bir Mac'te denenmedi. Linux'ta OCR, PDF sayfaları ve ek medya, kuruluysa isteğe bağlı sistem araçlarıyla (`tesseract`, `poppler`, `ffmpeg`) çalışır.
+- **İmzalı kurulum dosyası henüz yok.** NSIS/MSI derleme ayarları var (bkz. [`packaging/README.md`](packaging/README.md)), ama sürüm derlemeleri test edilmedi ve imzalanmadı. `llama-server` winget'ten gelir, modeller elle eklenir.
 - **Henüz ölçüm yok.** Yükleme süresi, bellek, tarama hızı ve arama kalitesi gerçek bir makinede ölçülmedi. İki dilli değerlendirme seti ve çalıştırıcısı [`examples/eval/`](examples/eval/README.md) klasöründe. Görsel açıklamalı ilk tarama belirgin şekilde daha yavaştır, çünkü LLM her görsele bir kere bakar.
-- **Ses dosyaları** sesin anlamından ve dosya adından bulunur; konuşmayı yazıya çevirme (STT) henüz yok.
-- **Sesli giriş/çıkış (STT/TTS)** henüz yapılmadı.
+- **Ses dosyaları** sesin anlamından ve dosya adından bulunur. Whisper modeli varsa içindeki konuşma da yerelde yazıya çevrilir ve aranabilir olur.
+- **Sesli giriş/çıkış (STT/TTS)** isteğe bağlı yerel `whisper-server` ve `piper` ile çalışır. Türkçe/İngilizce tam ses turu henüz gerçek donanımda denenmedi.
 - **Klasör izleme**, değişiklikler durduktan yaklaşık 10 saniye sonra klasörü yeniden tarar (yalnızca değişen dosyalar işlenir). Taşınan ya da adı değişen bir klasör, yeniden indekslenmeden yeni yerine **yeniden bağlanabilir**.
 
 ## Yol haritası
@@ -234,14 +237,12 @@ Ayrıntılar [`DEVELOPMENT.md`](DEVELOPMENT.md), son kullanıcı yardımı [`doc
 | P0 | Repo, CI, arayüz iskeleti, runtime spike'ları | bitti |
 | P1 | Klasör izinleri, güvenli tarama, tüm formatlar, OCR, izin kaldırma + temizleme | bitti |
 | P2 | Hibrit arama, sonuç kartları, aç / klasörde göster / önizle | bitti |
-| P3 | Geçmiş, istek anlama, LLM seçimi, görsel açıklamaları | sürüyor |
-| P4 | Model kaydı, doğrulama, gerektiğinde yükleme, boşta kapatma | bitti (embedding + LLM) |
-| P5 | Tepsi widget'ı, kısayol, ilk kurulum | bitti, cilalanıyor |
-| P6 | Ses (STT / TTS), paketleme | planlı |
+| P3 | Geçmiş, istek anlama, LLM seçimi, görsel açıklamaları, kaynaklı özetler | bitti, gerçek makinede deneme bekliyor |
+| P4 | Model kaydı, doğrulama, gerektiğinde yükleme, boşta kapatma | bitti (embedding, LLM, STT, TTS) |
+| P5 | Tepsi widget'ı, kısayol, ilk kurulum | bitti |
+| P6 | Ses (STT / TTS), paketleme | kod bitti, gerçek makinede deneme bekliyor |
 | P7 | Windows sürüm kapısı: kurulum dosyası, güvenlik ve değerlendirme matrisi | planlı |
-| P8 | macOS uyumu | planlı |
-
-Tam plan: [`docs/15_ROADMAP.md`](docs/15_ROADMAP.md).
+| P8 | macOS uyumu | sürüyor (kod + CI derlemesi var, Mac'te denenmedi) |
 
 ## Gizlilik
 

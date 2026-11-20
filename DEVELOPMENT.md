@@ -92,8 +92,7 @@ apps/desktop/src/
   ipc/      api.ts (sözleşme), core.ts (Rust çekirdeği), bridge.ts
   state/    ayarlar, veri, bildirim
   i18n/     en.json, tr.json
-database/001_initial.sql   tek şema kaynağı (core bunu gömer)
-docs/24_UI_UX_PLAN.md      tasarım kararları, tokenlar, fazlar, durum
+database/                  SQL migration'ları (core bunları gömer)
 ```
 
 ## Veritabanı

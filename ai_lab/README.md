@@ -1,6 +1,6 @@
 # Tamgabul LoRA Lab (`P9` Post-MVP Prep)
 
-Offline-first tooling for domain adaptation experiments on **EmbeddingGemma 2**, aligned with [`docs/16_LORA_LAB.md`](../docs/16_LORA_LAB.md), [`templates/EXPERIMENT_TEMPLATE.md`](../templates/EXPERIMENT_TEMPLATE.md), and verification ticket **V06**.
+Offline-first tooling for domain adaptation experiments on **EmbeddingGemma 2**.
 
 > **Important:** Nothing here runs in MVP production builds or uploads user data. Any adapted model creates a **new `index_generation`** in SQLite without mixing old vectors, and rolling back to the base model reactivates the preserved generation cleanly.
 
