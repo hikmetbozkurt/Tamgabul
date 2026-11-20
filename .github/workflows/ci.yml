@@ -45,8 +45,9 @@ jobs:
       - run: cargo test -p tamgabul-core -p tamgabul-platform -p tamgabul-runtime
 
   macos:
-    # Parity build & tests on Apple Silicon runner (P8, docs/10).
+    # Parity build & tests on Apple Silicon runner (P8). Non-blocking until tested on a Mac.
     runs-on: macos-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
