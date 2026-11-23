@@ -480,7 +480,7 @@
   "settings.licenseKind.model": "Model",
   "settings.licenseKind.runtime": "Çalıştırıcı",
   "settings.licenseKind.library": "Kütüphane",
-  "search.summaryTitle": "Gösterilen dosyalardan özet (yerel LLM)",
+  "search.summaryTitle": "Dosyalardan ek bilgi",
   "search.citeLabel": "Kaynak {n}: {file}",
   "search.notice.prior_not_accessible": "Daha önce uyan bir dosya göstermiştim ama klasörünün izni kaldırıldığı için onu tekrar gösteremiyorum.",
   "file.video": "Video",
@@ -564,5 +564,12 @@
   "addModel.fail.runtimeMac.stt": "whisper-server bulunamadı. whisper-cpp kurup (brew install whisper-cpp) tekrar dene.",
   "addModel.fail.runtimeMac.tts": "piper bulunamadı. Piper TTS kurup (PATH'e ekleyip veya TAMGABUL_PIPER tanımlayıp) tekrar dene.",
   "addModel.fail.smoke.stt": "STT deneme çalıştırması başarısız. Whisper model dosyanı ve whisper-server kurulumunu kontrol et.",
-  "addModel.fail.smoke.tts": "TTS deneme çalıştırması başarısız. Piper .onnx / .onnx.json dosyalarını ve piper kurulumunu kontrol et."
+  "addModel.fail.smoke.tts": "TTS deneme çalıştırması başarısız. Piper .onnx / .onnx.json dosyalarını ve piper kurulumunu kontrol et.",
+
+  "search.pickedShort.one": "Yerel LLM 1 tanesini seçti",
+  "search.pickedShort.other": "Yerel LLM {n} tanesini seçti",
+  "search.prevShort": "Daha önce gösterilen dosya · değişiklik {when}",
+  "search.foundPrevShort": "Daha önce sana gösterdiğim dosya bu.",
+  "search.source": "Kaynak",
+  "search.qaNav": "Bu aramadaki sorular"
 }

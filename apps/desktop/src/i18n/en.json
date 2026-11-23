@@ -480,7 +480,7 @@
   "settings.licenseKind.model": "Model",
   "settings.licenseKind.runtime": "Runtime",
   "settings.licenseKind.library": "Library",
-  "search.summaryTitle": "Summary from the shown files (local LLM)",
+  "search.summaryTitle": "More from the files",
   "search.citeLabel": "Source {n}: {file}",
   "search.notice.prior_not_accessible": "I showed a matching file before, but its folder is no longer allowed, so I can't show it again.",
   "file.video": "Video",
@@ -564,5 +564,12 @@
   "addModel.fail.runtimeMac.stt": "whisper-server was not found. Install whisper-cpp (brew install whisper-cpp) and try again.",
   "addModel.fail.runtimeMac.tts": "piper was not found. Install Piper TTS (add piper to PATH or set TAMGABUL_PIPER) and try again.",
   "addModel.fail.smoke.stt": "The STT test run failed. Check your Whisper model file and whisper-server installation.",
-  "addModel.fail.smoke.tts": "The TTS test run failed. Check your Piper .onnx / .onnx.json files and piper installation."
+  "addModel.fail.smoke.tts": "The TTS test run failed. Check your Piper .onnx / .onnx.json files and piper installation.",
+
+  "search.pickedShort.one": "Local LLM picked 1",
+  "search.pickedShort.other": "Local LLM picked {n}",
+  "search.prevShort": "Shown to you before · changed {when}",
+  "search.foundPrevShort": "This is the file I showed you before.",
+  "search.source": "Source",
+  "search.qaNav": "Questions in this search"
 }

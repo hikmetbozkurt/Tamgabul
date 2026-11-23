@@ -171,3 +171,27 @@ describe("LLM picks", () => {
     expect(screen.getByText("vize.jpg")).toBeTruthy();
   });
 });
+
+describe("search answer text", () => {
+  it("strips citation markers and spots a summary that repeats the answer", async () => {
+    const { stripCites, sameText } = await import("./features/search/Thread");
+    expect(stripCites("Net tutar 1.553,19 [4].")).toBe("Net tutar 1.553,19.");
+    expect(sameText("Net tutar 1.553,19 [4].", "Net tutar 1.553,19 [1].")).toBe(true);
+    expect(sameText("Vize 12 Mart.", "Kira 12.000 TL [2].")).toBe(false);
+  });
+
+  it("shows one question nav entry per question once there are two", async () => {
+    const { I18nProvider } = await import("./i18n");
+    const { QuestionNav } = await import("./features/search/Thread");
+    const turn = (id: string, text: string) => ({
+      turn_id: id, role: "user" as const, at: "2026-11-23T10:00:00Z", text, kind: null, count: null, choices: [], results: [],
+      opened: false, question: null, understood: null, answer: null, summary: null, picked_by_llm: false, picked_count: 0, notice: null,
+    });
+    const { rerender } = render(<I18nProvider lang="en"><QuestionNav turns={[turn("a", "first")]} /></I18nProvider>);
+    expect(screen.queryByRole("navigation", { name: "Questions in this search" })).toBeNull();
+    rerender(<I18nProvider lang="en"><QuestionNav turns={[turn("a", "first"), turn("b", "second")]} /></I18nProvider>);
+    const nav = screen.getByRole("navigation", { name: "Questions in this search" });
+    expect(nav.querySelectorAll("button").length).toBe(2);
+    expect(nav.querySelector('[aria-current="true"]')?.textContent).toContain("second");
+  });
+});

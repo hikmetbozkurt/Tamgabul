@@ -9,7 +9,7 @@ import { isUsable } from "../../lib/health";
 import { StatusPanel } from "../../shell/StatusPanel";
 import { navigate } from "../../shell/router";
 import { SearchBar } from "./SearchBar";
-import { Thread } from "./Thread";
+import { QuestionNav, Thread } from "./Thread";
 import { PreviewDrawer } from "./PreviewDrawer";
 import { useSearch } from "./useSearch";
 import { useResultActions } from "./useResultActions";
@@ -62,13 +62,14 @@ export function SearchPage() {
           <div className="search-page convo">
             <div className="search-wrap">
               <div className="convo-head">
-                {s.degraded ? (
-                  <span className="banner"><span className="dot dot-warn" />{t("search.degraded")}</span>
-                ) : <span />}
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => { speech.stop(); s.reset(); }}>
+                <QuestionNav turns={s.turns} />
+                <button type="button" className="btn btn-xs btn-ghost convo-new" onClick={() => { speech.stop(); s.reset(); }}>
                   <Icon name="plus" size={16} stroke={1.8} />{t("search.new")}
                 </button>
               </div>
+              {s.degraded && (
+                <span className="banner"><span className="dot dot-warn" />{t("search.degraded")}</span>
+              )}
               <Thread
                 turns={s.turns}
                 pending={s.pending}
@@ -81,7 +82,7 @@ export function SearchPage() {
                 onPreview={setPreview}
                 onSuggest={onSuggest}
               />
-              <div style={{ position: "sticky", bottom: 24 }}>{bar("follow")}</div>
+              <div className="convo-bar">{bar("follow")}</div>
             </div>
           </div>
         ) : (

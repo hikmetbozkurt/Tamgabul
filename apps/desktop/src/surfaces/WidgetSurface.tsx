@@ -9,6 +9,7 @@ import { isUsable } from "../lib/health";
 import { SearchBar } from "../features/search/SearchBar";
 import { CompactResult } from "../features/search/ResultCard";
 import { useSearch } from "../features/search/useSearch";
+import { stripCites } from "../features/search/Thread";
 import { useResultActions } from "../features/search/useResultActions";
 import { VoiceView } from "../features/voice/VoiceOverlay";
 import { useSpeech } from "../features/voice/useSpeech";
@@ -95,28 +96,33 @@ export function WidgetSurface() {
       }
       return (
         <>
-          {last.answer && (
-            <div className="w-bubble direct-answer">
-              <strong>{last.answer.text}</strong>
-              {ttsAvailable && (
-                <div>
-                  <button
-                    type="button"
-                    className="btn btn-xs"
-                    disabled={speech.loadingId === last.turn_id}
-                    onClick={() => speech.speak(last.turn_id, last.answer!.text)}
-                  >
-                    <Icon name={speech.speakingId === last.turn_id ? "stop" : "speakerWaves"} size={14} />
-                    {speech.loadingId === last.turn_id
-                      ? t("voice.reading")
-                      : speech.speakingId === last.turn_id
-                        ? t("voice.stopReading")
-                        : t("voice.readAloud")}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+          {(last.answer || last.summary) && (() => {
+            const text = stripCites(last.answer?.text ?? last.summary!.text);
+            const src = last.answer ? last.results.find((r) => r.result_ref === last.answer!.result_ref)?.title : undefined;
+            return (
+              <div className="w-bubble direct-answer">
+                <strong>{text}</strong>
+                {src && <span className="small muted">{t("search.source")}: {src}</span>}
+                {ttsAvailable && (
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      disabled={speech.loadingId === last.turn_id}
+                      onClick={() => speech.speak(last.turn_id, text)}
+                    >
+                      <Icon name={speech.speakingId === last.turn_id ? "stop" : "speakerWaves"} size={14} />
+                      {speech.loadingId === last.turn_id
+                        ? t("voice.reading")
+                        : speech.speakingId === last.turn_id
+                          ? t("voice.stopReading")
+                          : t("voice.readAloud")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {last.results.slice(0, 3).map((r, i) => <CompactResult key={r.result_ref} r={r} primary={i === 0} onOpen={actions.onOpen} />)}
           {(last.count ?? 0) > 3 && (
             <button type="button" className="btn-link" style={{ alignSelf: "center" }} onClick={() => openApp("search")}>{t("widget.seeAll", { n: last.count ?? 0 })}</button>

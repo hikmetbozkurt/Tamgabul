@@ -24,11 +24,13 @@ type Actions = {
   onPreview: (ref: string) => void;
 };
 
-export function ResultCard({ r, opened, ...a }: { r: Card; opened?: boolean } & Actions) {
+/** Search result row: icon, title, where/what/when, two-line snippet, actions. */
+export function ResultRow({ r, opened, ...a }: { r: Card; opened?: boolean } & Actions) {
   const { t, lang } = useI18n();
+  const meta = [r.project, t(FILE_KIND_KEY[r.file_kind]), relativeTime(r.modified_at, lang)].filter(Boolean).join(" · ");
   return (
     <article
-      className="card result"
+      className="rrow"
       tabIndex={0}
       data-result
       aria-label={r.title}
@@ -37,32 +39,32 @@ export function ResultCard({ r, opened, ...a }: { r: Card; opened?: boolean } & 
         if (e.key === " " && e.target === e.currentTarget) { e.preventDefault(); a.onPreview(r.result_ref); }
       }}
     >
-      <div className="result-top">
-        <span className="icon-tile file tile"><Icon name={FILE_ICON[r.file_kind]} size={30} stroke={1.6} /></span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="result-title">{r.title}</div>
-          <div className="result-path">{r.display_path}</div>
-          {r.snippet && (
-            <p className="result-snippet"><Snippet text={r.snippet} marks={r.highlights} /></p>
-          )}
+      <span className={`icon-tile ${r.file_kind === "image" ? "" : "file"} rrow-tile`} aria-hidden="true">
+        <Icon name={FILE_ICON[r.file_kind]} size={20} stroke={1.6} />
+      </span>
+      <div className="rrow-main">
+        <div className="rrow-title">
+          <span className="t">{r.title}</span>
+          {opened && <span className="opened-badge"><Icon name="check" size={12} stroke={2.4} />{t("result.opened")}</span>}
         </div>
-        <button type="button" className="btn btn-icon" aria-label={t("result.reveal")} title={t("result.reveal")} onClick={() => a.onReveal(r.result_ref)}>
-          <Icon name="external" size={17} stroke={1.8} />
-        </button>
+        <div className="rrow-meta">
+          <span>{meta}</span>
+          <span className="path" title={r.display_path}>{r.display_path}</span>
+        </div>
+        {r.snippet && (
+          <p className="rrow-snippet"><Snippet text={r.snippet} marks={r.highlights} /></p>
+        )}
       </div>
-      <div className="result-foot">
-        {r.project && <span className="chip chip-meta"><Icon name="folder" size={17} />{r.project}</span>}
-        <span className="chip chip-meta"><Icon name="fileText" size={16} />{t(FILE_KIND_KEY[r.file_kind])}</span>
-        <span className="chip chip-meta"><Icon name="clock" size={17} />{relativeTime(r.modified_at, lang)}</span>
-        {opened && <span className="opened-badge"><Icon name="check" size={14} stroke={2.4} />{t("result.opened")}</span>}
-        <div className="result-actions">
-          <button type="button" className="btn" style={{ padding: "0 20px" }} onClick={() => a.onPreview(r.result_ref)}>
-            <Icon name="eye" size={18} />{t("result.preview")}
-          </button>
-          <button type="button" className="btn btn-primary" style={{ padding: "0 26px" }} onClick={() => a.onOpen(r.result_ref)}>
-            <Icon name="external" size={17} stroke={1.8} />{t("result.open")}
-          </button>
-        </div>
+      <div className="rrow-actions">
+        <button type="button" className="btn btn-icon btn-ghost" aria-label={t("result.reveal")} title={t("result.reveal")} onClick={() => a.onReveal(r.result_ref)}>
+          <Icon name="folder" size={17} />
+        </button>
+        <button type="button" className="btn btn-xs" onClick={() => a.onPreview(r.result_ref)}>
+          <Icon name="eye" size={16} />{t("result.preview")}
+        </button>
+        <button type="button" className="btn btn-xs btn-primary" onClick={() => a.onOpen(r.result_ref)}>
+          <Icon name="external" size={15} stroke={1.8} />{t("result.open")}
+        </button>
       </div>
     </article>
   );
